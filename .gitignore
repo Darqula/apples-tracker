@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/
+*.log
+.env
+*.tsbuildinfo
+e2e/.tmp/
+e2e/screenshots/
+test-results/
+playwright-report/
