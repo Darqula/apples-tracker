@@ -1,30 +1,34 @@
 # Implementation Plan
 
-Each checkpoint ends in a working, testable state and gets its own commit. Delegate the
+**Status: checkpoints 0–7 are implemented and reviewed; Playwright e2e tests are the last addition.** Each checkpoint ends in a working, testable state and gets its own commit. Delegate the
 bulk code writing to `cheap-coder` (model `opencode-go/glm-5.3-flash`); review every diff.
 
 ## Repo layout
 
 ```
 apples-tracker/
-  package.json            # npm workspaces: server, web
+  package.json            # npm workspaces: server, web; scripts dev/build/start/test/seed/mcp
   server/
     src/
       index.ts            # start Fastify, bind 127.0.0.1
-      app.ts              # buildApp(db) -> Fastify instance (used by tests)
+      app.ts              # buildApp(db, {webDist}) -> Fastify instance (used by tests)
       db.ts               # open DB, run migrations
-      migrations/001_init.sql
-      routes/companies.ts
-      routes/postings.ts
-      schemas.ts          # shared JSON schemas (validation + OpenAPI)
-    test/                 # Vitest API tests
-    mcp/index.ts          # MCP stdio server
+      migrations/         # 001_init.sql, 002_context.sql
+      routes/             # companies.ts, postings.ts, context.ts (+ /api/guide)
+      schemas.ts          # JSON schemas (validation + OpenAPI), STATES, STAGE_ORDER
+      openapi.ts          # @fastify/swagger + swagger-ui
+      ai-guide.md         # usage guide for AI assistants (single source of truth)
+      mcp/                # api-client.ts, server.ts (12 tools + guide resource)
+      mcp-stdio.ts        # MCP stdio entry point (env APPLES_API_URL)
+      seed.ts             # demo data
+    test/                 # Vitest tests (in-memory SQLite)
   web/
     src/
-      api.ts              # typed fetch client
-      App.tsx             # tabs
-      pages/PostingsPage.tsx, CompaniesPage.tsx
-      components/DataTable.tsx, PostingForm.tsx, CompanyForm.tsx, StateBadge.tsx
+      api.ts, hash.ts, forms.ts, grouping.ts, contextState.ts   # pure/typed helpers (unit-tested)
+      App.tsx             # tabs (hash routing)
+      pages/              # PostingsPage, CompaniesPage, ContextPage
+      components/         # DataTable, Modal, ConfirmDialog, PostingForm, CompanyForm, SearchBox, UrlList
+  e2e/                    # Playwright end-to-end tests
   data/                   # apples.db (gitignored)
 ```
 
@@ -122,9 +126,9 @@ apples-tracker/
 
 ## Checkpoint 6 — MCP server (primary AI interface)
 
-- `server/mcp/index.ts` using `@modelcontextprotocol/sdk` over stdio; calls the REST API
-  at `API_URL` (default `http://127.0.0.1:3001`) so there is one source of truth.
-- Tools as listed in the README (including `get_context` / `update_context`); concise
+- `server/src/mcp/` (`server.ts`, `api-client.ts`) with entry point `server/src/mcp-stdio.ts` using `@modelcontextprotocol/sdk` over stdio; calls the REST API
+  at `APPLES_API_URL` (default `http://127.0.0.1:3001`) so there is one source of truth.
+- Tools as listed in the README (including `get_context` / `update_context`, which remembers the version last read and refuses blind or stale writes; delete tools require `confirm: true`; search results omit `aiContext`); concise
   descriptions that state when to use each tool, input schemas reused from `schemas.ts`;
   errors returned as tool errors with the API message.
 - Pass the contents of `ai-guide.md` as the server `instructions` and expose it as the

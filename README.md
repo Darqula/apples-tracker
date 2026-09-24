@@ -91,8 +91,14 @@ The server binds to `127.0.0.1` only.
 
 `search_postings`, `get_posting`, `create_posting`, `update_posting`, `delete_posting`,
 `search_companies`, `get_company`, `create_company`, `update_company`, `delete_company`,
-`get_context`, `update_context`. Tool schemas mirror the API. `create_posting` accepts `companyName` and creates the
-company if missing, so an assistant needs only one call.
+`get_context`, `update_context`. Tool schemas mirror the API. `create_posting` and
+`update_posting` accept `companyName` and create the company if missing, so an assistant
+needs only one call.
+
+Built-in safeguards: delete tools refuse unless called with `confirm: true` (the guide
+tells the model to ask you first); `update_context` refuses until `get_context` has been
+called and rejects the write if the note changed since (no blind overwrites); search
+results are compact and omit `aiContext` (use `get_posting` / `get_company` for it).
 
 ## AI usage guide
 
@@ -113,9 +119,23 @@ as the MCP resource `apples://guide`, and at `GET /api/guide` for REST clients. 
 
 ```
 npm install
-npm run dev      # server on :3001, web on :5173
+npm run dev      # development: API on :3001, web (hot reload) on :5173
+npm run seed     # optional demo data (add `-- --reset` to wipe first)
 npm test
-npm run mcp      # stdio MCP server (needs the API running)
+
+npm run build && npm start   # single process: API + UI at http://127.0.0.1:3001
 ```
+
+Data lives in `data/apples.db` (override with `DB_PATH`); back it up by copying the file.
+
+**Connect an AI assistant (MCP).** The API must be running (`npm run dev` or `npm start`).
+Claude Code:
+
+```
+claude mcp add apples-tracker -- npm run mcp --prefix W:/Projects/apples-tracker
+```
+
+or any MCP client config: command `npm`, args `["run","mcp","--prefix","<repo path>"]`.
+Set `APPLES_API_URL` if the API is not at `http://127.0.0.1:3001`.
 
 See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the build order.
