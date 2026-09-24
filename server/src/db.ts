@@ -30,7 +30,12 @@ function runMigrations(db: Db) {
   }
 }
 
-export function openDb(path_ = process.env.DB_PATH ?? "data/apples.db"): Db {
+const DEFAULT_DB_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../data/apples.db",
+);
+
+export function openDb(path_ = process.env.DB_PATH ?? DEFAULT_DB_PATH): Db {
   if (path_ !== ":memory:") {
     fs.mkdirSync(path.dirname(path_), { recursive: true });
   }
