@@ -1,8 +1,8 @@
 # Apples Tracker
 
-A small, single-user app for tracking job applications and the companies behind them.
-Runs locally, no auth, no cloud. Data lives in one SQLite file. Humans use the web UI;
-AI assistants use an HTTP API (OpenAPI spec) or an MCP server over the same data.
+A small, single-user app for tracking job applications and the companies behind them,
+entirely vibecoded. Runs locally, no auth, no cloud. Data lives in one SQLite file. Humans use the
+web UI; AI assistants use an HTTP API (OpenAPI spec) or an MCP server over the same data.
 
 ## Goals
 
@@ -12,12 +12,10 @@ AI assistants use an HTTP API (OpenAPI spec) or an MCP server over the same data
 - AI-friendly: an assistant can read and update the data without scraping the UI.
 - Zero operational burden: `npm install && npm run dev`, one DB file to back up.
 
-Non-goals: auth, multi-user, scalability, notifications, email/calendar sync.
-
 ## Features
 
 - **Postings tab** — table: company, title, date applied, state, description (short), URLs.
-  Sortable columns, filter by state, row click opens the edit form.
+  Filter by state; a row click opens a details panel with Edit and Delete buttons.
   **Group by** selector: *None*, *Company* (groups A→Z) or *State* (groups ordered by
   stage, most advanced first). Groups have collapsible headers with a row count; within
   a group rows are sorted by date applied, newest first.
@@ -40,11 +38,12 @@ Non-goals: auth, multi-user, scalability, notifications, email/calendar sync.
 
 ## Stack
 
-- Node.js 22+, TypeScript, npm workspaces (`server/`, `web/`)
+- Node.js 22+, TypeScript, npm workspaces
 - Server: Fastify + `better-sqlite3`, JSON-schema validation, `@fastify/swagger`
 - Web: React + Vite + TypeScript, TanStack Table (and TanStack Query for fetching)
 - MCP: `@modelcontextprotocol/sdk`, stdio transport, thin wrapper over the REST API
-- Tests: Vitest (server API tests against in-memory SQLite)
+- Tests: Vitest (server API and MCP tests against in-memory SQLite, web unit tests) and
+  Playwright end-to-end tests (`npm run test:e2e`)
 
 ## Data model
 
@@ -121,7 +120,7 @@ as the MCP resource `apples://guide`, and at `GET /api/guide` for REST clients. 
 npm install
 npm run dev      # development: API on :3001, web (hot reload) on :5173
 npm run seed     # optional demo data (add `-- --reset` to wipe first)
-npm test
+npm test         # unit tests; `npm run test:e2e` runs the browser tests
 
 npm run build && npm start   # single process: API + UI at http://127.0.0.1:3001
 ```
@@ -132,10 +131,9 @@ Data lives in `data/apples.db` (override with `DB_PATH`); back it up by copying 
 Claude Code:
 
 ```
-claude mcp add apples-tracker -- npm run mcp --prefix W:/Projects/apples-tracker
+claude mcp add apples-tracker -- npm run mcp --prefix <repo path>
 ```
 
-or any MCP client config: command `npm`, args `["run","mcp","--prefix","<repo path>"]`.
+or any MCP client config: command `npm`, args `["run","mcp","--prefix","<repo path>"]`,
+where `<repo path>` is the absolute path of this repository.
 Set `APPLES_API_URL` if the API is not at `http://127.0.0.1:3001`.
-
-See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the build order.
