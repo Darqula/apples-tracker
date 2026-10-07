@@ -1,4 +1,6 @@
-export const DEFAULT_API_BASE_URL = "http://127.0.0.1:3001";
+import { DEFAULT_HOST, DEFAULT_PORT } from "../config.js";
+
+export const DEFAULT_API_BASE_URL = `http://${DEFAULT_HOST}:${DEFAULT_PORT}`;
 
 export function resolveApiBaseUrl(): string {
   return process.env.APPLES_API_URL ?? DEFAULT_API_BASE_URL;

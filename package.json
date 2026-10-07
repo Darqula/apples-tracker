@@ -11,7 +11,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "concurrently -n server,web -c blue,green \"npm run dev -w server\" \"npm run dev -w web\"",
+    "dev": "node scripts/dev.mjs",
     "seed": "npm run seed -w server --silent --",
     "build": "npm run build -w server && npm run build -w web",
     "test": "npm test -w server && npm test -w web",
