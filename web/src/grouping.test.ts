@@ -18,6 +18,7 @@ function makePosting(overrides: Partial<Posting> = {}): Posting {
     description: "",
     aiContext: "",
     urls: [],
+    lists: [],
     createdAt: "",
     updatedAt: "",
     ...overrides,

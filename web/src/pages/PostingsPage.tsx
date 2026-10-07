@@ -28,6 +28,9 @@ import UrlList from "../components/UrlList";
 import Modal from "../components/Modal";
 import ConfirmDialog from "../components/ConfirmDialog";
 import PostingForm from "../components/PostingForm";
+import ListFilter from "../components/ListFilter";
+import ListIcon from "../components/ListIcon";
+import { invalidateListQueries, resolveListFilter, useLists } from "../components/useLists";
 import { useHotkey } from "../useHotkey";
 
 export interface PostingsPageProps {
@@ -76,6 +79,7 @@ async function invalidatePostingQueries(
   client: ReturnType<typeof useQueryClient>,
 ): Promise<void> {
   await Promise.all([
+    invalidateListQueries(client),
     client.invalidateQueries({ queryKey: ["postings"] }),
     client.invalidateQueries({ queryKey: ["companies"] }),
     client.invalidateQueries({ queryKey: ["company"] }),
@@ -95,6 +99,10 @@ export default function PostingsPage({ params, navigate }: PostingsPageProps) {
 
   // Collapsed groups: kept out of the URL on purpose — they persist while
   // filtering/searching but reset on reload (per component remount).
+  const listsQuery = useLists("posting");
+  const lists = listsQuery.data?.items ?? [];
+  const listFilter = resolveListFilter(params.listId, listsQuery.data?.items);
+
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [modal, setModal] = useState<ModalState>(null);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -103,12 +111,13 @@ export default function PostingsPage({ params, navigate }: PostingsPageProps) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const listQuery = useQuery({
-    queryKey: ["postings", { q, state: stateFilter, companyId, sort: "stage", limit: 2000 }],
+    queryKey: ["postings", { q, state: stateFilter, companyId, listId: listFilter, sort: "stage", limit: 2000 }],
     queryFn: () =>
       listPostings({
         q: q === "" ? undefined : q,
         state: stateFilter === "" ? undefined : stateFilter,
         companyId: companyId ?? undefined,
+        listId: listFilter ?? undefined,
         sort: "stage",
         limit: 2000,
       }),
@@ -143,6 +152,15 @@ export default function PostingsPage({ params, navigate }: PostingsPageProps) {
 
   const setStateFilter = (value: string) => {
     navigate("postings", { ...params, state: value }, { replace: true });
+  };
+
+  const setListFilter = (id: number | null) => {
+    if (id === null) {
+      const { listId: _removed, ...rest } = params;
+      navigate("postings", rest, { replace: true });
+    } else {
+      navigate("postings", { ...params, listId: String(id) }, { replace: true });
+    }
   };
 
   const setGroupBy = (value: GroupBy) => {
@@ -274,7 +292,7 @@ export default function PostingsPage({ params, navigate }: PostingsPageProps) {
   const groups = useMemo(() => groupPostings(postings, groupBy), [postings, groupBy]);
   const companiesAll = companiesAllQuery.data?.items ?? [];
   const formBusy = createMutation.isPending || updateMutation.isPending;
-  const hasFilters = q !== "" || stateFilter !== "" || companyId !== null;
+  const hasFilters = q !== "" || stateFilter !== "" || companyId !== null || listFilter !== null;
   const emptyMessage = hasFilters
     ? "No postings match the current filters."
     : "No postings yet.";
@@ -315,6 +333,11 @@ export default function PostingsPage({ params, navigate }: PostingsPageProps) {
         accessorKey: "title",
         header: "Title",
         cell: (info) => <span className="cell-name">{info.getValue<string>()}</span>,
+      },
+      {
+        id: "lists",
+        header: "",
+        cell: ({ row }) => <ListIcon lists={row.original.lists} />,
       },
       {
         accessorKey: "appliedDate",
@@ -392,6 +415,8 @@ export default function PostingsPage({ params, navigate }: PostingsPageProps) {
               ))}
             </div>
           </div>
+
+          <ListFilter kind="posting" lists={lists} value={listFilter} onChange={setListFilter} />
 
           <button
             type="button"
@@ -528,6 +553,7 @@ export default function PostingsPage({ params, navigate }: PostingsPageProps) {
             key={modal.mode === "create" ? "create" : `edit-${modal.posting.id}`}
             initial={modal.mode === "create" ? createInitial : postingToForm(modal.posting)}
             companyNames={companiesAll.map((company) => company.name)}
+            lists={lists}
             submitLabel={modal.mode === "create" ? "Create posting" : "Save changes"}
             busy={formBusy}
             serverError={serverError}
@@ -597,6 +623,12 @@ function SelectedPostingPanel({ posting, openEdit, openDelete }: SelectedPosting
           {posting.company.name}
         </a>
       </p>
+      {posting.lists.length > 0 && (
+        <p className="company-details-line">
+          <span className="detail-label">Lists: </span>
+          {posting.lists.map((list) => list.name).join(", ")}
+        </p>
+      )}
       <p className="company-details-line">
         <span className="detail-label">State: </span>
         <span className={`badge badge-${posting.state}`}>{posting.state}</span>

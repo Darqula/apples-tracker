@@ -12,9 +12,18 @@ export interface CompanyFormValues {
   description: string;
   aiContext: string;
   urlsText: string;
+  listIds: number[];
 }
 
 const HTTP_URL_PATTERN = /^https?:\/\/\S+$/;
+
+// Order-insensitive comparison of two id sets.
+export function sameIds(a: readonly number[], b: readonly number[]): boolean {
+  if (a.length !== b.length) return false;
+  const sortedA = [...a].sort((x, y) => x - y);
+  const sortedB = [...b].sort((x, y) => x - y);
+  return sortedA.every((id, index) => id === sortedB[index]);
+}
 
 // Split on any whitespace so both newline-per-line and space-separated
 // entries work; every valid URL is whitespace-free by definition.
@@ -61,7 +70,7 @@ export function validateCompanyForm(values: CompanyFormValues): Record<string, s
 }
 
 export function emptyCompanyForm(): CompanyFormValues {
-  return { name: "", website: "", location: "", description: "", aiContext: "", urlsText: "" };
+  return { name: "", website: "", location: "", description: "", aiContext: "", urlsText: "", listIds: [] };
 }
 
 export function companyToForm(company: Company | CompanyDetail): CompanyFormValues {
@@ -72,6 +81,7 @@ export function companyToForm(company: Company | CompanyDetail): CompanyFormValu
     description: company.description,
     aiContext: company.aiContext,
     urlsText: company.urls.join("\n"),
+    listIds: company.lists.map((list) => list.id),
   };
 }
 
@@ -85,6 +95,7 @@ export function companyFormToInput(values: CompanyFormValues): CompanyInput {
     description: values.description.trim(),
     aiContext: values.aiContext.trim(),
     urls: parseUrlLines(values.urlsText).urls,
+    listIds: [...values.listIds],
   };
 }
 
@@ -108,6 +119,9 @@ export function companyFormToPatch(
   ) {
     patch.urls = input.urls;
   }
+  if (!sameIds(values.listIds, original.lists.map((list) => list.id))) {
+    patch.listIds = [...values.listIds];
+  }
 
   return patch;
 }
@@ -125,6 +139,7 @@ export interface PostingFormValues {
   description: string;
   aiContext: string;
   urlsText: string;
+  listIds: number[];
 }
 
 // Real calendar date: 2026-02-31 would parse as 2026-03-03, so round-trip
@@ -175,6 +190,7 @@ export function emptyPostingForm(
     description: "",
     aiContext: "",
     urlsText: "",
+    listIds: [],
   };
 }
 
@@ -187,6 +203,7 @@ export function postingToForm(posting: Posting): PostingFormValues {
     description: posting.description,
     aiContext: posting.aiContext,
     urlsText: posting.urls.join("\n"),
+    listIds: posting.lists.map((list) => list.id),
   };
 }
 
@@ -216,6 +233,7 @@ export function postingFormToCreateInput(
     description: values.description.trim(),
     aiContext: values.aiContext.trim(),
     urls: parseUrlLines(values.urlsText).urls,
+    listIds: [...values.listIds],
     ...(existing !== undefined
       ? { companyId: existing.id }
       : { companyName: values.companyName.trim() }),
@@ -255,6 +273,10 @@ export function postingFormToPatch(
     urls.some((url, index) => url !== original.urls[index])
   ) {
     patch.urls = urls;
+  }
+
+  if (!sameIds(values.listIds, original.lists.map((list) => list.id))) {
+    patch.listIds = [...values.listIds];
   }
 
   if (resolvedCompanyId !== original.companyId) patch.companyId = resolvedCompanyId;

@@ -10,6 +10,9 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { ApiError } from "../api";
 import type { Company, CompanyDetail } from "../api";
 import { createCompany, deleteCompany, getCompany, listCompanies, updateCompany } from "../api";
+import ListFilter from "../components/ListFilter";
+import ListIcon from "../components/ListIcon";
+import { invalidateListQueries, resolveListFilter, useLists } from "../components/useLists";
 import {
   buildHash,
   type NavigateFn,
@@ -47,6 +50,7 @@ type DeleteTarget = { company: CompanyDetail; cascade: boolean } | null;
 
 async function invalidateCompanyQueries(client: ReturnType<typeof useQueryClient>): Promise<void> {
   await Promise.all([
+    invalidateListQueries(client),
     client.invalidateQueries({ queryKey: ["companies"] }),
     client.invalidateQueries({ queryKey: ["company"] }),
     client.invalidateQueries({ queryKey: ["postings"] }),
@@ -63,6 +67,12 @@ export default function CompaniesPage({ params, navigate }: CompaniesPageProps) 
       ? parsedSelection
       : null;
 
+  const listsQuery = useLists("company");
+  const lists = listsQuery.data?.items ?? [];
+  const listFilter = resolveListFilter(params.listId, listsQuery.data?.items);
+  // Hash params that must survive search/selection changes.
+  const keep: RouteParams = listFilter === null ? {} : { listId: String(listFilter) };
+
   const [modal, setModal] = useState<ModalState>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [serverFieldErrors, setServerFieldErrors] = useState<Record<string, string>>({});
@@ -70,8 +80,8 @@ export default function CompaniesPage({ params, navigate }: CompaniesPageProps) 
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const listQuery = useQuery({
-    queryKey: ["companies", { q }],
-    queryFn: () => listCompanies({ q: q === "" ? undefined : q }),
+    queryKey: ["companies", { q, listId: listFilter }],
+    queryFn: () => listCompanies({ q: q === "" ? undefined : q, listId: listFilter ?? undefined }),
   });
 
   const detailQuery = useQuery({
@@ -88,17 +98,23 @@ export default function CompaniesPage({ params, navigate }: CompaniesPageProps) 
   const setSearch = (value: string) => {
     // Keep the panel open while refining the search; replace so that typing
     // does not spam browser history.
-    navigate("companies", value === "" ? { selected: selectedParam } : { q: value, selected: selectedParam }, {
+    navigate("companies", { ...keep, ...(value === "" ? {} : { q: value }), selected: selectedParam }, {
       replace: true,
     });
   };
 
   const closePanel = () => {
-    navigate("companies", q === "" ? {} : { q }, { replace: true });
+    navigate("companies", { ...keep, ...(q === "" ? {} : { q }) }, { replace: true });
+  };
+
+  const setListFilter = (id: number | null) => {
+    navigate("companies", { ...(q === "" ? {} : { q }), ...(id === null ? {} : { listId: String(id) }), selected: selectedParam }, {
+      replace: true,
+    });
   };
 
   const onRowClick = (company: Company) => {
-    navigate("companies", { q: q, selected: String(company.id) });
+    navigate("companies", { ...keep, q: q, selected: String(company.id) });
   };
 
   // Global `n` opens the create modal unless the user is typing somewhere.
@@ -115,7 +131,7 @@ export default function CompaniesPage({ params, navigate }: CompaniesPageProps) 
       void invalidateCompanyQueries(client);
       // Select the newly created company (pushes a history entry, since the
       // modal just closed).
-      navigate("companies", { q: q, selected: String(company.id) });
+      navigate("companies", { ...keep, q: q, selected: String(company.id) });
     },
     onError: (error) => {
       if (error instanceof ApiError && error.code === "CONFLICT") {
@@ -153,7 +169,7 @@ export default function CompaniesPage({ params, navigate }: CompaniesPageProps) 
       setDeleteTarget(null);
       setDeleteError(null);
       // Drop the deleted company's selection from the hash and refresh.
-      navigate("companies", q === "" ? {} : { q }, { replace: true });
+      navigate("companies", { ...keep, ...(q === "" ? {} : { q }) }, { replace: true });
       void invalidateCompanyQueries(client);
     },
     onError: (error) => {
@@ -186,6 +202,11 @@ export default function CompaniesPage({ params, navigate }: CompaniesPageProps) 
         accessorKey: "name",
         header: "Name",
         cell: (info) => <span className="cell-name">{info.getValue<string>()}</span>,
+      },
+      {
+        id: "lists",
+        header: "",
+        cell: ({ row }) => <ListIcon lists={row.original.lists} />,
       },
       {
         accessorFn: (row) => row.website ?? "",
@@ -261,6 +282,7 @@ export default function CompaniesPage({ params, navigate }: CompaniesPageProps) 
             onChange={setSearch}
             placeholder="Search companies…"
           />
+          <ListFilter kind="company" lists={lists} value={listFilter} onChange={setListFilter} />
           <button
             type="button"
             className="button"
@@ -291,7 +313,7 @@ export default function CompaniesPage({ params, navigate }: CompaniesPageProps) 
             onRowClick={onRowClick}
             loading={listQuery.isPending}
             emptyMessage={
-              q === "" ? "No companies yet." : "No companies match the search."
+              q === "" && listFilter === null ? "No companies yet." : "No companies match the current filters."
             }
             getRowId={(row) => String(row.id)}
           />
@@ -343,6 +365,7 @@ export default function CompaniesPage({ params, navigate }: CompaniesPageProps) 
           <CompanyForm
             key={modal.mode === "create" ? "create" : `edit-${modal.company.id}`}
             initial={modal.mode === "create" ? emptyCompanyForm() : companyToForm(modal.company)}
+            lists={lists}
             submitLabel={modal.mode === "create" ? "Create company" : "Save changes"}
             busy={formBusy}
             serverError={serverError}
@@ -426,6 +449,12 @@ function SelectedCompanyPanel({ company, openEdit, openDelete }: SelectedCompany
           Delete
         </button>
       </div>
+      {company.lists.length > 0 && (
+        <p className="company-details-line">
+          <span className="detail-label">Lists: </span>
+          {company.lists.map((list) => list.name).join(", ")}
+        </p>
+      )}
       <p className="company-details-line">
         <span className="detail-label">Website: </span>
         {company.website === null ? (

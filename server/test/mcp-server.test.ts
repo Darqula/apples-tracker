@@ -19,6 +19,10 @@ const TOOL_NAMES = [
   "create_company",
   "update_company",
   "delete_company",
+  "get_lists",
+  "create_list",
+  "rename_list",
+  "delete_list",
   "get_context",
   "update_context",
 ];

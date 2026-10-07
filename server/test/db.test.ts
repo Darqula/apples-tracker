@@ -20,7 +20,7 @@ describe("migrations", () => {
     db.close();
   });
 
-  it("re-opening a temp-file db is idempotent (user_version = 2)", () => {
+  it("re-opening a temp-file db is idempotent (user_version = 3)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "apples-db-test-"));
     const dbPath = path.join(dir, "test.db");
     let db: Database;
@@ -31,7 +31,7 @@ describe("migrations", () => {
 
       db = openDb(dbPath);
       const version = db.pragma("user_version", { simple: true }) as number;
-      expect(version).toBe(2);
+      expect(version).toBe(3);
       const users = db.prepare("SELECT COUNT(*) as count FROM context").get() as { count: number };
       expect(users.count).toBe(1);
     } finally {

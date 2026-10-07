@@ -6,9 +6,13 @@
 import { useState, type FormEvent, type KeyboardEvent } from "react";
 import type { CompanyFormValues } from "../forms";
 import { validateCompanyForm } from "../forms";
+import type { ListItem } from "../api";
+import ListPicker from "./ListPicker";
 
 export interface CompanyFormProps {
   initial: CompanyFormValues;
+  /** Existing company lists to pick from. */
+  lists: ListItem[];
   submitLabel: string;
   busy: boolean;
   serverError?: string | null;
@@ -23,6 +27,7 @@ const URLS_HINT = "One URL per line; each must start with http:// or https://.";
 
 export default function CompanyForm({
   initial,
+  lists,
   submitLabel,
   busy,
   serverError = null,
@@ -154,6 +159,13 @@ export default function CompanyForm({
           <span className="form-field-error">{fieldError("urlsText")}</span>
         )}
       </label>
+
+      <ListPicker
+        lists={lists}
+        selected={values.listIds}
+        onChange={(listIds) => setValues((previous) => ({ ...previous, listIds }))}
+        disabled={busy}
+      />
 
       <div className="form-actions">
         {onDelete !== undefined && (

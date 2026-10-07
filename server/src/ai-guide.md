@@ -48,6 +48,20 @@ Before rewriting a record's `aiContext`, read its current value and preserve it.
 
 Listing stage order: `offer > interview > screening > applied > saved > rejected > withdrawn > ghosted`.
 
+## Lists
+
+The user can group companies and postings into **lists** — plain named groups such as
+"Contractors" or "Never consider". Company lists and posting lists are separate sets;
+an item can be in several lists.
+
+- `get_lists` (kind `company` or `posting`) before creating a list, to avoid near-duplicates.
+- Assign items with `listIds` on `create_*` / `update_*`. On update, `listIds` **replaces the whole
+  set**: read the item's current `lists` first and send the full desired set.
+- Filter searches with `listId`. Records show their `lists` as `[{ id, name }]`.
+- Deleting a list never deletes its items. Ask the user before `delete_list`.
+- Respect list meaning: for example, do not suggest or draft applications for companies in a
+  "Never consider" list unless the user asks.
+
 ## Deletion
 
 - Prefer **updating** over deleting. Ask the user for **explicit confirmation**
@@ -73,6 +87,7 @@ Do not invent facts. Leave unknown fields empty.
 | --- | --- |
 | Postings | `search_postings`, `get_posting`, `create_posting`, `update_posting`, `delete_posting` |
 | Companies | `search_companies`, `get_company`, `create_company`, `update_company`, `delete_company` |
+| Lists | `get_lists`, `create_list`, `rename_list`, `delete_list` |
 | Context | `get_context`, `update_context` |
 
-The REST API mirrors these tools under `/api/postings`, `/api/companies`, `/api/context`.
+The REST API mirrors these tools under `/api/postings`, `/api/companies`, `/api/company-lists`, `/api/posting-lists`, `/api/context`.

@@ -4,6 +4,7 @@ import { registerOpenApi } from "./openapi.js";
 import { registerCompanyRoutes } from "./routes/companies.js";
 import { registerPostingRoutes } from "./routes/postings.js";
 import { registerContextRoutes } from "./routes/context.js";
+import { registerListRoutes } from "./routes/lists.js";
 import { openDb, type Db } from "./db.js";
 import fastifyStatic from "@fastify/static";
 import fs from "node:fs";
@@ -63,6 +64,7 @@ export function buildApp(db?: Db, options?: BuildAppOptions): FastifyInstance {
     registerCompanyRoutes(instance, database);
     registerPostingRoutes(instance, database);
     registerContextRoutes(instance, database);
+    registerListRoutes(instance, database);
 
     instance.get(
       "/api/health",

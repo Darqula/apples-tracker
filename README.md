@@ -26,6 +26,12 @@ web UI; AI assistants use an HTTP API (OpenAPI spec) or an MCP server over the s
   posting lets me pick an existing company or create one inline.
 - **Search** — one search box per tab: postings match job title or company name;
   companies match name. Descriptions and AI context are deliberately not searched.
+- **Lists** — user-defined named groups for companies and (separately) for postings, e.g.
+  "Contractors" or "Never consider". An item can be in several lists. A **List** dropdown on
+  the Postings/Companies toolbars filters to one list, **Manage lists** creates, renames and
+  deletes them, and the item forms have a list picker. Rows in a list show a ☰ icon whose
+  tooltip names every list, one per line. Deleting a list never deletes items, and deleting
+  an item just removes it from its lists.
 - **AI Context tab** — one editable text area holding shared memory for the whole job
   search (target roles, CV highlights, preferences, current strategy, open questions).
   Assistants read it at the start of a session and update it as things change.
@@ -58,6 +64,10 @@ free-text meant for AI models (e.g. my CV-fit notes, interview prep, tone or con
 for drafting messages). It is returned by the API and MCP tools, editable in the forms,
 and not shown in the tables.
 
+**company_lists** / **posting_lists**: `id`, `name` (unique per kind, case-insensitive),
+`created_at`; membership lives in the join tables `company_list_members` and
+`posting_list_members` (both sides `ON DELETE CASCADE`).
+
 **context** (singleton, one row): `content` (free text, Markdown), `updated_at`. This is
 the shared memory for the current job search, separate from the per-record `ai_context`.
 
@@ -76,10 +86,11 @@ is passed; the UI asks for confirmation first.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET/POST | `/api/postings` | list supports `q`, `state`, `companyId`, `sort` (incl. `stage`, `company`), `limit`, `offset` |
+| GET/POST | `/api/postings` | list supports `q`, `state`, `companyId`, `listId`, `sort` (incl. `stage`, `company`), `limit`, `offset` |
 | GET/PATCH/DELETE | `/api/postings/:id` | GET includes the embedded company |
 | GET/POST | `/api/companies` | list supports `q`, `sort`, includes `postingCount` |
 | GET/PATCH/DELETE | `/api/companies/:id` | GET includes its postings; DELETE accepts `cascade` |
+| GET/POST | `/api/company-lists`, `/api/posting-lists` | named lists with `memberCount`; `PATCH`/`DELETE` on `/:id` rename/delete |
 | GET/PUT | `/api/context` | shared job-search memory; PUT replaces `content` |
 | GET | `/api/guide` | the AI usage guide as Markdown |
 
@@ -90,7 +101,9 @@ The server binds to `127.0.0.1` only.
 
 `search_postings`, `get_posting`, `create_posting`, `update_posting`, `delete_posting`,
 `search_companies`, `get_company`, `create_company`, `update_company`, `delete_company`,
-`get_context`, `update_context`. Tool schemas mirror the API. `create_posting` and
+`get_lists`, `create_list`, `rename_list`, `delete_list` (kind `company` or `posting`),
+`get_context`, `update_context`. Postings and companies carry `lists`; create/update tools take
+`listIds` (replaces the set) and the search tools take `listId`. Tool schemas mirror the API. `create_posting` and
 `update_posting` accept `companyName` and create the company if missing, so an assistant
 needs only one call.
 

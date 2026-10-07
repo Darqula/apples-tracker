@@ -26,6 +26,23 @@ export const STAGE_ORDER: readonly State[] = [
   "ghosted",
 ];
 
+// A list a company/posting belongs to (as embedded in API responses).
+export interface ListRef {
+  id: number;
+  name: string;
+}
+
+// Company lists and posting lists are two independent sets of named groups.
+export type ListKind = "company" | "posting";
+
+// A user-defined list as returned by GET /api/{company,posting}-lists.
+export interface ListItem {
+  id: number;
+  name: string;
+  memberCount: number;
+  createdAt: string;
+}
+
 export interface Company {
   id: number;
   name: string;
@@ -35,6 +52,7 @@ export interface Company {
   aiContext: string;
   urls: string[];
   postingCount: number;
+  lists: ListRef[];
   createdAt: string;
   updatedAt: string;
 }
@@ -65,6 +83,7 @@ export interface Posting {
   description: string;
   aiContext: string;
   urls: string[];
+  lists: ListRef[];
   createdAt: string;
   updatedAt: string;
 }
@@ -88,6 +107,7 @@ export type PostingSort = "stage" | "company" | "applied" | "-applied" | "title"
 
 export interface ListCompaniesParams {
   q?: string;
+  listId?: number;
   sort?: CompanySort;
   limit?: number;
   offset?: number;
@@ -97,6 +117,7 @@ export interface ListPostingsParams {
   q?: string;
   state?: State;
   companyId?: number;
+  listId?: number;
   sort?: PostingSort;
   limit?: number;
   offset?: number;
@@ -136,6 +157,8 @@ export interface CompanyInput {
   description: string;
   aiContext: string;
   urls: string[];
+  // Replaces the whole set of lists when present; omitted = unchanged.
+  listIds?: number[];
 }
 
 interface RequestOptions {
@@ -187,6 +210,7 @@ export function listCompanies(params: ListCompaniesParams = {}): Promise<Page<Co
   return request<Page<Company>>(
     `/api/companies${toQueryString({
       q: params.q,
+      listId: params.listId,
       sort: params.sort,
       limit: params.limit,
       offset: params.offset,
@@ -204,6 +228,7 @@ export function listPostings(params: ListPostingsParams = {}): Promise<Page<Post
       q: params.q,
       state: params.state,
       companyId: params.companyId,
+      listId: params.listId,
       sort: params.sort,
       limit: params.limit,
       offset: params.offset,
@@ -261,7 +286,7 @@ export interface PostingInput
 // The server accepts any non-empty subset of PostingInput for PATCH, but
 // only `companyId` — not `companyName` — so patch types must not carry it.
 export type PostingPatch = Partial<
-  Pick<PostingInput, "title" | "state" | "appliedDate" | "description" | "aiContext" | "urls">
+  Pick<PostingInput, "title" | "state" | "appliedDate" | "description" | "aiContext" | "urls" | "listIds">
 > & { companyId?: number };
 
 export function createPosting(input: PostingInput): Promise<Posting> {
@@ -279,4 +304,27 @@ export function deletePosting(id: number): Promise<void> {
   return request<void>(`/api/postings/${encodeURIComponent(String(id))}`, {
     method: "DELETE",
   });
+}
+
+const listsPath = (kind: ListKind) => (kind === "company" ? "/api/company-lists" : "/api/posting-lists");
+
+export function listLists(kind: ListKind): Promise<Page<ListItem>> {
+  return request<Page<ListItem>>(listsPath(kind));
+}
+
+// Rejects with a 409 CONFLICT ApiError when the name already exists (case-insensitively).
+export function createList(kind: ListKind, name: string): Promise<ListItem> {
+  return request<ListItem>(listsPath(kind), { method: "POST", body: { name } });
+}
+
+export function renameList(kind: ListKind, id: number, name: string): Promise<ListItem> {
+  return request<ListItem>(`${listsPath(kind)}/${encodeURIComponent(String(id))}`, {
+    method: "PATCH",
+    body: { name },
+  });
+}
+
+// Only the list is removed; its companies/postings stay.
+export function deleteList(kind: ListKind, id: number): Promise<void> {
+  return request<void>(`${listsPath(kind)}/${encodeURIComponent(String(id))}`, { method: "DELETE" });
 }

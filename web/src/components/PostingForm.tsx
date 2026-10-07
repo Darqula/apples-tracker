@@ -7,11 +7,15 @@ import { useState, type FormEvent, type KeyboardEvent } from "react";
 import type { PostingFormValues } from "../forms";
 import { validatePostingForm } from "../forms";
 import { STAGE_ORDER } from "../api";
+import type { ListItem } from "../api";
+import ListPicker from "./ListPicker";
 
 export interface PostingFormProps {
   initial: PostingFormValues;
   /** Names for the company <datalist> (existing companies). */
   companyNames: string[];
+  /** Existing posting lists to pick from. */
+  lists: ListItem[];
   submitLabel: string;
   busy: boolean;
   serverError?: string | null;
@@ -32,6 +36,7 @@ function capFirst(text: string): string {
 export default function PostingForm({
   initial,
   companyNames,
+  lists,
   submitLabel,
   busy,
   serverError = null,
@@ -188,6 +193,13 @@ export default function PostingForm({
           <span className="form-field-error">{fieldError("urlsText")}</span>
         )}
       </label>
+
+      <ListPicker
+        lists={lists}
+        selected={values.listIds}
+        onChange={(listIds) => setValues((previous) => ({ ...previous, listIds }))}
+        disabled={busy}
+      />
 
       <div className="form-actions">
         {onDelete !== undefined && (

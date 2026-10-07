@@ -10,6 +10,7 @@ import {
   STAGE_ORDER,
 } from "../schemas.js";
 import type { Db } from "../db.js";
+import { loadListsFor, memberFilterSql, setMemberships, type ListRef } from "./lists.js";
 
 interface PostingRow {
   id: number;
@@ -34,9 +35,10 @@ interface PostingBody {
   description?: string;
   aiContext?: string;
   urls?: unknown[];
+  listIds?: number[];
 }
 
-function toApiPosting(row: PostingRow) {
+function toApiPosting(row: PostingRow, lists: ListRef[] = []) {
   let urls: string[];
   try {
     const parsed = JSON.parse(row.urls) as unknown;
@@ -54,6 +56,7 @@ function toApiPosting(row: PostingRow) {
     description: row.description,
     aiContext: row.ai_context,
     urls,
+    lists,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -71,6 +74,11 @@ const POSTING_SELECT = `SELECT postings.id, postings.company_id, companies.name 
 
 function getPostingRow(db: Db, id: number): PostingRow | undefined {
   return db.prepare(`${POSTING_SELECT} WHERE postings.id = ?`).get(id) as PostingRow | undefined;
+}
+
+function withLists(db: Db, rows: PostingRow[]) {
+  const lists = loadListsFor(db, "posting", rows.map((r) => r.id));
+  return rows.map((row) => toApiPosting(row, lists.get(row.id)));
 }
 
 function noSuchPosting() {
@@ -113,6 +121,7 @@ export function registerPostingRoutes(app: FastifyInstance, db: Db) {
         q,
         state,
         companyId,
+        listId,
         sort = "stage",
         limit = 500,
         offset = 0,
@@ -120,6 +129,7 @@ export function registerPostingRoutes(app: FastifyInstance, db: Db) {
         q?: string;
         state?: string;
         companyId?: number;
+        listId?: number;
         sort?: string;
         limit?: number;
         offset?: number;
@@ -139,6 +149,10 @@ export function registerPostingRoutes(app: FastifyInstance, db: Db) {
       if (companyId !== undefined) {
         conditions.push("postings.company_id = ?");
         params.push(companyId);
+      }
+      if (listId !== undefined) {
+        conditions.push(memberFilterSql("posting", "postings.id"));
+        params.push(listId);
       }
 
       const where = conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
@@ -166,7 +180,7 @@ export function registerPostingRoutes(app: FastifyInstance, db: Db) {
         .prepare(`${POSTING_SELECT}${where} ORDER BY ${order} LIMIT ? OFFSET ?`)
         .all(...params, limit, offset) as unknown as PostingRow[];
 
-      return { items: rows.map(toApiPosting), total };
+      return { items: withLists(db, rows), total };
     },
   );
 
@@ -191,7 +205,7 @@ export function registerPostingRoutes(app: FastifyInstance, db: Db) {
       const row = getPostingRow(db, id);
       if (!row) throw noSuchPosting();
 
-      return toApiPosting(row);
+      return withLists(db, [row])[0];
     },
   );
 
@@ -216,46 +230,53 @@ export function registerPostingRoutes(app: FastifyInstance, db: Db) {
       const body = request.body as PostingBody;
       const state = body.state ?? "saved";
 
-      let companyId: number | undefined;
-
       if (body.companyId !== undefined) {
         const company = db.prepare("SELECT id FROM companies WHERE id = ?").get(body.companyId);
         if (!company) throw noSuchCompany();
-        companyId = body.companyId;
-      } else {
-        const name = body.companyName!.trim();
-        companyId = db.transaction(() => {
+      }
+
+      // One transaction: an unknown list id must not leave a new company or posting behind.
+      const id = db.transaction(() => {
+        let companyId: number;
+        if (body.companyId !== undefined) {
+          companyId = body.companyId;
+        } else {
+          const name = body.companyName!.trim();
           const existing = db.prepare("SELECT id FROM companies WHERE name = ? COLLATE NOCASE").get(name) as
             | { id: number }
             | undefined;
-          if (existing) return existing.id;
-          const created = db
-            .prepare(
-              `INSERT INTO companies (name, description, ai_context) VALUES (?, ?, ?)`,
-            )
-            .run(name, "", "");
-          return Number(created.lastInsertRowid);
-        })();
-      }
+          if (existing) {
+            companyId = existing.id;
+          } else {
+            const created = db
+              .prepare(
+                `INSERT INTO companies (name, description, ai_context) VALUES (?, ?, ?)`,
+              )
+              .run(name, "", "");
+            companyId = Number(created.lastInsertRowid);
+          }
+        }
 
-      const result = db
-        .prepare(
-          `INSERT INTO postings (company_id, title, state, applied_date, description, ai_context, urls)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          companyId,
-          body.title,
-          state,
-          body.appliedDate ?? null,
-          body.description ?? "",
-          body.aiContext ?? "",
-          JSON.stringify(body.urls ?? []),
-        );
+        const result = db
+          .prepare(
+            `INSERT INTO postings (company_id, title, state, applied_date, description, ai_context, urls)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            companyId,
+            body.title,
+            state,
+            body.appliedDate ?? null,
+            body.description ?? "",
+            body.aiContext ?? "",
+            JSON.stringify(body.urls ?? []),
+          );
+        const newId = Number(result.lastInsertRowid);
+        if (body.listIds !== undefined) setMemberships(db, "posting", newId, body.listIds);
+        return newId;
+      })();
 
-      const row = getPostingRow(db, Number(result.lastInsertRowid))!;
-
-      return reply.status(201).send(toApiPosting(row));
+      return reply.status(201).send(withLists(db, [getPostingRow(db, id)!])[0]);
     },
   );
 
@@ -321,11 +342,12 @@ export function registerPostingRoutes(app: FastifyInstance, db: Db) {
       updates.push("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')");
       values.push(id);
 
-      db.prepare(`UPDATE postings SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+      db.transaction(() => {
+        if (body.listIds !== undefined) setMemberships(db, "posting", id, body.listIds);
+        db.prepare(`UPDATE postings SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+      })();
 
-      const row = getPostingRow(db, id)!;
-
-      return toApiPosting(row);
+      return withLists(db, [getPostingRow(db, id)!])[0];
     },
   );
 

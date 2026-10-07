@@ -23,6 +23,21 @@ const nonEmptyString = { type: 'string', minLength: 1 } as const;
 
 const nullableString = { type: ['string', 'null'] } as const;
 
+const listIdsProperty = {
+  type: 'array',
+  items: { type: 'integer', minimum: 1 },
+  description: 'Ids of the lists the item belongs to. On update this REPLACES the whole set ([] removes the item from all lists); omit it to leave memberships unchanged',
+} as const;
+
+const listRefsProperty = {
+  type: 'array',
+  description: 'Lists the item belongs to, sorted by name',
+  items: {
+    type: 'object',
+    properties: { id: { type: 'integer' }, name: { type: 'string' } },
+  },
+} as const;
+
 export const errorResponseSchema = {
   type: 'object',
   required: ['error'],
@@ -59,6 +74,7 @@ export const companyCreateSchema = {
     description: { type: 'string', description: 'General notes about the company, shown in tables' },
     aiContext: { type: 'string', description: 'Notes for AI models about the company; not shown in tables' },
     urls: { type: 'array', items: urlString, description: 'Full http(s) links related to the company' },
+    listIds: listIdsProperty,
   },
   examples: [
     {
@@ -83,6 +99,7 @@ export const companyPatchSchema = {
     description: { type: 'string', description: 'General notes about the company, shown in tables' },
     aiContext: { type: 'string', description: 'Notes for AI models about the company; not shown in tables' },
     urls: { type: 'array', items: urlString, description: 'Full http(s) links related to the company' },
+    listIds: listIdsProperty,
   },
 } as const;
 
@@ -106,6 +123,7 @@ export const companyResponseSchema = {
     aiContext: { type: 'string' },
     urls: { type: 'array', items: { type: 'string' } },
     postingCount: { type: 'integer' },
+    lists: listRefsProperty,
     createdAt: { type: 'string' },
     updatedAt: { type: 'string' },
   },
@@ -149,6 +167,7 @@ export const postingCreateSchema = {
     description: { type: 'string', description: 'Job description / role details, shown in tables' },
     aiContext: { type: 'string', description: 'Notes for AI models about the posting; not shown in tables' },
     urls: { type: 'array', items: urlString, description: 'Full http(s) links related to the posting' },
+    listIds: listIdsProperty,
   },
   examples: [
     {
@@ -175,6 +194,7 @@ export const postingPatchSchema = {
     description: { type: 'string', description: 'Job description / role details, shown in tables' },
     aiContext: { type: 'string', description: 'Notes for AI models about the posting; not shown in tables' },
     urls: { type: 'array', items: urlString, description: 'Full http(s) links related to the posting' },
+    listIds: listIdsProperty,
   },
 } as const;
 
@@ -196,6 +216,7 @@ export const postingResponseSchema = {
     description: { type: 'string' },
     aiContext: { type: 'string' },
     urls: { type: 'array', items: { type: 'string' } },
+    lists: listRefsProperty,
     createdAt: { type: 'string' },
     updatedAt: { type: 'string' },
   },
@@ -218,6 +239,7 @@ export const postingListQuerySchema = {
     },
     limit: { type: 'integer', minimum: 1, maximum: 2000, default: 500, description: 'Maximum number of postings to return (1–2000). Default 500' },
     offset: { type: 'integer', minimum: 0, description: 'Number of postings to skip; use for paging' },
+    listId: { type: 'integer', minimum: 1, description: 'Only return items that belong to the list with this id' },
   },
 } as const;
 
@@ -258,6 +280,7 @@ export const companyListQuerySchema = {
     },
     limit: { type: 'integer', minimum: 1, maximum: 1000, description: 'Maximum number of companies to return (1–1000). Default 200' },
     offset: { type: 'integer', minimum: 0, description: 'Number of companies to skip; use for paging' },
+    listId: { type: 'integer', minimum: 1, description: 'Only return items that belong to the list with this id' },
   },
 } as const;
 
@@ -269,5 +292,25 @@ export const companyDeleteQuerySchema = {
       enum: ['true', 'false'],
       description: "Set 'true' to also delete the company's postings; 'false' (default) refuses with 409 when the company still has postings",
     },
+  },
+} as const;
+
+export const listCreateSchema = {
+  type: 'object',
+  required: ['name'],
+  additionalProperties: false,
+  properties: {
+    name: { ...nonEmptyString, description: 'List name. Unique among lists of the same kind, compared case-insensitively.' },
+  },
+  examples: [{ name: 'Never consider' }],
+} as const;
+
+export const listResponseSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'integer' },
+    name: { type: 'string' },
+    memberCount: { type: 'integer', description: 'Number of items currently in the list' },
+    createdAt: { type: 'string' },
   },
 } as const;

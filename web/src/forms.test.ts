@@ -10,6 +10,7 @@ import {
   postingFormToCreateInput,
   postingFormToPatch,
   postingToForm,
+  sameIds,
   validateCompanyForm,
   validatePostingForm,
 } from "./forms";
@@ -50,6 +51,7 @@ describe("emptyCompanyForm", () => {
       description: "",
       aiContext: "",
       urlsText: "",
+      listIds: [],
     });
   });
 });
@@ -85,6 +87,7 @@ describe("companyFormToInput", () => {
       description: ".",
       aiContext: "",
       urls: [],
+      listIds: [],
     });
   });
 
@@ -104,6 +107,10 @@ describe("companyFormToPatch", () => {
     aiContext: "notes",
     urls: ["https://a.example", "https://b.example"],
     postingCount: 0,
+    lists: [
+      { id: 10, name: "Contractors" },
+      { id: 11, name: "Never consider" },
+    ],
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
@@ -127,6 +134,14 @@ describe("companyFormToPatch", () => {
     expect(patch).toEqual({ website: null, location: null });
   });
 
+  it("sends listIds only when the set of lists changed (order-insensitive)", () => {
+    const form = companyToForm(company);
+    expect(companyFormToPatch(company, { ...form, listIds: [11, 10] })).toEqual({});
+    expect(companyFormToPatch(company, { ...form, listIds: [10] })).toEqual({ listIds: [10] });
+    expect(companyFormToPatch(company, { ...form, listIds: [] })).toEqual({ listIds: [] });
+    expect(companyFormToPatch(company, { ...form, listIds: [10, 11, 12] })).toEqual({ listIds: [10, 11, 12] });
+  });
+
   it("sends urls when the list changed", () => {
     const patch = companyFormToPatch(company, { ...companyToForm(company), urlsText: "https://b.example\nhttps://a.example" });
     expect(patch).toEqual({ urls: ["https://b.example", "https://a.example"] });
@@ -143,6 +158,7 @@ const POSTING: Posting = {
   description: "Build widgets",
   aiContext: "notes",
   urls: ["https://a.example", "https://b.example"],
+  lists: [{ id: 20, name: "Dream jobs" }],
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
@@ -162,6 +178,7 @@ describe("emptyPostingForm", () => {
       description: "",
       aiContext: "",
       urlsText: "",
+      listIds: [],
     });
   });
 
@@ -223,6 +240,7 @@ describe("postingFormToCreateInput", () => {
       description: "",
       aiContext: "",
       urls: [],
+      listIds: [],
       companyId: 1,
     });
   });
@@ -278,5 +296,29 @@ describe("postingFormToPatch", () => {
   it("does not include companyId when it is unchanged", () => {
     const patch = postingFormToPatch(POSTING, postingToForm(POSTING), 1);
     expect(patch).toEqual({});
+  });
+});
+
+describe("posting list membership", () => {
+  it("maps lists to form listIds and into the create input", () => {
+    expect(postingToForm(POSTING).listIds).toEqual([20]);
+    const values = { ...emptyPostingForm({ companyName: "Acme" }), title: "T", listIds: [3, 4] };
+    expect(postingFormToCreateInput(values, COMPANIES).listIds).toEqual([3, 4]);
+  });
+
+  it("patches listIds only when the set changed", () => {
+    const form = postingToForm(POSTING);
+    expect(postingFormToPatch(POSTING, form, POSTING.companyId)).toEqual({});
+    expect(postingFormToPatch(POSTING, { ...form, listIds: [] }, POSTING.companyId)).toEqual({ listIds: [] });
+    expect(postingFormToPatch(POSTING, { ...form, listIds: [20, 21] }, POSTING.companyId)).toEqual({ listIds: [20, 21] });
+  });
+});
+
+describe("sameIds", () => {
+  it("compares id sets regardless of order", () => {
+    expect(sameIds([1, 2, 3], [3, 1, 2])).toBe(true);
+    expect(sameIds([1, 2], [1, 2, 3])).toBe(false);
+    expect(sameIds([], [])).toBe(true);
+    expect(sameIds([1, 2], [1, 3])).toBe(false);
   });
 });

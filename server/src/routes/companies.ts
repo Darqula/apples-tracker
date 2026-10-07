@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { HttpError } from "../errors.js";
 import { companyCreateSchema, idParamsSchema, companyPatchSchema, companyResponseSchema, companyDetailResponseSchema, companyListQuerySchema, companyDeleteQuerySchema, errorResponseSchema } from "../schemas.js";
 import type { Db } from "../db.js";
+import { loadListsFor, memberFilterSql, setMemberships, type ListRef } from "./lists.js";
 
 interface CompanyRow {
   id: number;
@@ -23,9 +24,10 @@ interface CompanyBody {
   description?: string;
   aiContext?: string;
   urls?: unknown[];
+  listIds?: number[];
 }
 
-function toApiCompany(row: CompanyRow) {
+function toApiCompany(row: CompanyRow, lists: ListRef[] = []) {
   let urls: string[];
   try {
     const parsed = JSON.parse(row.urls) as unknown;
@@ -42,6 +44,7 @@ function toApiCompany(row: CompanyRow) {
     aiContext: row.ai_context,
     urls,
     postingCount: row.posting_count,
+    lists,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -58,6 +61,11 @@ const COMPANY_SELECT = `SELECT id, name, website, location, description, ai_cont
 
 function getCompanyRow(db: Db, id: number): CompanyRow | undefined {
   return db.prepare(`${COMPANY_SELECT} WHERE id = ?`).get(id) as CompanyRow | undefined;
+}
+
+function withLists(db: Db, rows: CompanyRow[]) {
+  const lists = loadListsFor(db, "company", rows.map((r) => r.id));
+  return rows.map((row) => toApiCompany(row, lists.get(row.id)));
 }
 
 function noSuchCompany() {
@@ -88,20 +96,26 @@ export function registerCompanyRoutes(app: FastifyInstance, db: Db) {
       },
     },
     async (request) => {
-      const { q, sort = "name", limit = 200, offset = 0 } = request.query as {
+      const { q, sort = "name", limit = 200, offset = 0, listId } = request.query as {
         q?: string;
+        listId?: number;
         sort?: string;
         limit?: number;
         offset?: number;
       };
 
-      let where = "";
-      let params: unknown[] = [];
+      const conditions: string[] = [];
+      const params: unknown[] = [];
 
       if (q && q.length > 0) {
-        where = " WHERE name LIKE ? ESCAPE '\\'";
-        params = ["%" + escapeLike(q) + "%"];
+        conditions.push("name LIKE ? ESCAPE '\\'");
+        params.push("%" + escapeLike(q) + "%");
       }
+      if (listId !== undefined) {
+        conditions.push(memberFilterSql("company", "companies.id"));
+        params.push(listId);
+      }
+      const where = conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
 
       const order =
         sort === "-name"
@@ -124,7 +138,7 @@ export function registerCompanyRoutes(app: FastifyInstance, db: Db) {
         )
         .all(...params, limit, offset) as unknown as CompanyRow[];
 
-      return { items: rows.map(toApiCompany), total };
+      return { items: withLists(db, rows), total };
     },
   );
 
@@ -160,7 +174,7 @@ export function registerCompanyRoutes(app: FastifyInstance, db: Db) {
         .all(id) as unknown as { id: number; title: string; state: string; applied_date: string | null }[];
 
       return {
-        ...toApiCompany(row),
+        ...withLists(db, [row])[0],
         postings: postings.map((p) => ({
           id: p.id,
           title: p.title,
@@ -199,23 +213,26 @@ export function registerCompanyRoutes(app: FastifyInstance, db: Db) {
         throw new HttpError(409, "CONFLICT", `Company with name '${name}' already exists`);
       }
 
-      const result = db
-        .prepare(
-          `INSERT INTO companies (name, website, location, description, ai_context, urls)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          name,
-          body.website ?? null,
-          body.location ?? null,
-          body.description ?? "",
-          body.aiContext ?? "",
-          JSON.stringify(body.urls ?? []),
-        );
+      const id = db.transaction(() => {
+        const result = db
+          .prepare(
+            `INSERT INTO companies (name, website, location, description, ai_context, urls)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            name,
+            body.website ?? null,
+            body.location ?? null,
+            body.description ?? "",
+            body.aiContext ?? "",
+            JSON.stringify(body.urls ?? []),
+          );
+        const newId = Number(result.lastInsertRowid);
+        if (body.listIds !== undefined) setMemberships(db, "company", newId, body.listIds);
+        return newId;
+      })();
 
-      const rec = getCompanyRow(db, Number(result.lastInsertRowid))!;
-
-      return reply.status(201).send(toApiCompany(rec));
+      return reply.status(201).send(withLists(db, [getCompanyRow(db, id)!])[0]);
     },
   );
 
@@ -281,11 +298,12 @@ export function registerCompanyRoutes(app: FastifyInstance, db: Db) {
       updates.push("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')");
       values.push(id);
 
-      db.prepare(`UPDATE companies SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+      db.transaction(() => {
+        if (body.listIds !== undefined) setMemberships(db, "company", id, body.listIds);
+        db.prepare(`UPDATE companies SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+      })();
 
-      const row = getCompanyRow(db, id)!;
-
-      return toApiCompany(row);
+      return withLists(db, [getCompanyRow(db, id)!])[0];
     },
   );
 

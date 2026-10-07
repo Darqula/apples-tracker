@@ -15,6 +15,9 @@ const positiveInt = z.number().int().min(1);
 
 const idArgShape = { id: positiveInt };
 
+const listIdsShape = z.array(positiveInt).optional();
+const listKindShape = z.enum(["company", "posting"]);
+
 // Shapes of API responses the MCP layer post-processes (the ids/types mirror the REST
 // schema in src/schemas.ts).
 interface ApiPosting {
@@ -26,6 +29,7 @@ interface ApiPosting {
   appliedDate: string | null;
   description: string;
   urls: string[];
+  lists: { id: number; name: string }[];
 }
 interface ApiContext {
   content: string;
@@ -39,12 +43,14 @@ interface ApiCompany {
   description: string;
   urls: string[];
   postingCount: number;
+  lists: { id: number; name: string }[];
 }
 
 const postingSearchShape = {
   q: z.string().optional(),
   state: z.enum(STATES).optional(),
   companyId: positiveInt.optional(),
+  listId: positiveInt.optional(),
   sort: z.enum(["stage", "company", "applied", "-applied", "title", "updated"]).optional(),
   limit: z.number().int().min(1).max(2000).optional(),
   offset: z.number().int().min(0).optional(),
@@ -60,6 +66,7 @@ const postingCreateShape = z
     description: z.string().optional(),
     aiContext: z.string().optional(),
     urls: z.array(fullUrl).optional(),
+    listIds: listIdsShape,
   })
   .refine((body) => (body.companyId !== undefined) !== (body.companyName !== undefined), {
     message: "provide exactly one of companyId or companyName",
@@ -76,6 +83,7 @@ const postingPatchShape = z
     description: z.string().optional(),
     aiContext: z.string().optional(),
     urls: z.array(fullUrl).optional(),
+    listIds: listIdsShape,
   })
   .refine((body) => Object.entries(body).some(([key, value]) => key !== "id" && value !== undefined), {
     message: "body must contain at least one field beside id",
@@ -86,6 +94,7 @@ const postingPatchShape = z
 
 const companySearchShape = {
   q: z.string().optional(),
+  listId: positiveInt.optional(),
   sort: z.enum(["name", "-name", "created", "-created"]).optional(),
   limit: z.number().int().min(1).max(1000).optional(),
   offset: z.number().int().min(0).optional(),
@@ -97,6 +106,7 @@ const companyFieldsShape = {
   description: z.string().optional(),
   aiContext: z.string().optional(),
   urls: z.array(fullUrl).optional(),
+  listIds: listIdsShape,
 };
 
 const companyCreateShape = z.object({ name: z.string().min(1), ...companyFieldsShape });
@@ -220,7 +230,7 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
     {
       description:
         "List and search job postings. Optional filters: q (matches only job title and company name, " +
-        "case-insensitive substring — never description or AI context), state, companyId, sort " +
+        "case-insensitive substring — never description or AI context), state, companyId, listId (only members of that list), sort " +
         "('stage' = most advanced first; also 'company', 'applied', '-applied', 'title', 'updated'), " +
         "limit (1–2000, default 500) and offset. Returns { items, total }; use total for paging. " +
         "Results are compact to save tokens: aiContext is omitted — use get_posting for the full record.",
@@ -233,6 +243,7 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
             q: args.q,
             state: args.state,
             companyId: args.companyId,
+            listId: args.listId,
             sort: args.sort,
             limit: args.limit,
             offset: args.offset,
@@ -249,6 +260,7 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
             appliedDate: item.appliedDate,
             description: item.description,
             urls: item.urls,
+            lists: item.lists,
           })),
         })),
     { readOnlyHint: true },
@@ -272,7 +284,7 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
         "Create a job posting. Provide exactly one of companyName (created on the fly if it does not exist; " +
         "search first to avoid duplicates) or companyId of an existing company. title is required; state " +
         "defaults to 'saved'. appliedDate is an ISO YYYY-MM-DD date, urls must be full http(s) links. " +
-        "Do not invent facts — leave unknown fields out.",
+        "Optional listIds puts the posting into those lists (see get_lists). Do not invent facts — leave unknown fields out.",
     },
     postingCreateShape,
     (args) => api.request("POST", "/api/postings", { body: args }),
@@ -283,7 +295,7 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
     {
       description:
         "Partially update a job posting by id: title, state, appliedDate (null clears it), description, " +
-        "aiContext, urls, or companyId to move it to another existing company. companyName moves the posting " +
+        "aiContext, urls, listIds (REPLACES the posting's whole set of lists; read it first), or companyId to move it to another existing company. companyName moves the posting " +
         "to that company, creating it if missing; give only one of companyId or companyName. Unknown ids fail " +
         "with NOT_FOUND. Read the posting first and preserve existing aiContext notes.",
     },
@@ -298,6 +310,7 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
       description?: string;
       aiContext?: string;
       urls?: string[];
+      listIds?: number[];
     }) => {
       const { id, companyId, companyName, ...body } = args;
       let resolvedCompanyId = companyId;
@@ -344,7 +357,7 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
     {
       description:
         "List and search companies with their posting counts. Optional filters: q (matches only the company " +
-        "name, case-insensitive substring), sort ('name', '-name', 'created', '-created'), limit (1–1000, " +
+        "name, case-insensitive substring), listId (only members of that list), sort ('name', '-name', 'created', '-created'), limit (1–1000, " +
         "default 200) and offset. Returns { items, total }. Results are compact to save tokens: aiContext and " +
         "timestamps are omitted — use get_company for the full record. Always search before creating to avoid " +
         "duplicates.",
@@ -353,7 +366,7 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
     (args) =>
       api
         .request<{ total: number; items: ApiCompany[] }>("GET", "/api/companies", {
-          query: { q: args.q, sort: args.sort, limit: args.limit, offset: args.offset },
+          query: { q: args.q, listId: args.listId, sort: args.sort, limit: args.limit, offset: args.offset },
         })
         .then((result: { total: number; items: ApiCompany[] }) => ({
           total: result.total,
@@ -365,6 +378,7 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
             description: item.description,
             urls: item.urls,
             postingCount: item.postingCount,
+            lists: item.lists,
           })),
         })),
     { readOnlyHint: true },
@@ -386,7 +400,7 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
     {
       description:
         "Create a company. The name is unique (case-insensitive; duplicates fail with CONFLICT) — search first " +
-        "before creating. website must be a full http(s) link; use null to clear it.",
+        "before creating. website must be a full http(s) link; use null to clear it. Optional listIds puts the company into those lists (see get_lists).",
     },
     companyCreateShape,
     (args) => api.request("POST", "/api/companies", { body: args }),
@@ -396,7 +410,7 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
     "update_company",
     {
       description:
-        "Partially update a company by id: name, website, location, description, aiContext or urls. " +
+        "Partially update a company by id: name, website, location, description, aiContext, urls or listIds (REPLACES the company's whole set of lists; read it first). " +
         "Only the provided fields change; names stay unique case-insensitively. Read the company first " +
         "and preserve existing aiContext notes.",
     },
@@ -420,6 +434,60 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
       return api.request("DELETE", `/api/companies/${args.id}`, {
         query: { cascade: args.cascade ? "true" : "false" },
       });
+    },
+    { destructiveHint: true },
+  );
+
+  // --- Lists ------------------------------------------------------------------
+
+  const listsPath = (kind: "company" | "posting") => (kind === "company" ? "/api/company-lists" : "/api/posting-lists");
+
+  tool(
+    "get_lists",
+    {
+      description:
+        "Read the user-defined lists of one kind ('company' or 'posting'): named groups such as 'Contractors' or " +
+        "'Never consider'. Returns { items: [{ id, name, memberCount }], total }. Check it before creating a list " +
+        "to avoid near-duplicates. Assign items to lists with listIds on create/update tools; filter with listId on search tools.",
+    },
+    { kind: listKindShape },
+    (args: { kind: "company" | "posting" }) => api.request("GET", listsPath(args.kind)),
+    { readOnlyHint: true },
+  );
+
+  tool(
+    "create_list",
+    {
+      description:
+        "Create an empty list of kind 'company' or 'posting'. Names are unique per kind (case-insensitive; " +
+        "duplicates fail with CONFLICT). Returns the list with its id.",
+    },
+    { kind: listKindShape, name: z.string().min(1) },
+    (args: { kind: "company" | "posting"; name: string }) =>
+      api.request("POST", listsPath(args.kind), { body: { name: args.name } }),
+  );
+
+  tool(
+    "rename_list",
+    { description: "Rename a list by id (kind 'company' or 'posting'). Fails with NOT_FOUND for unknown ids, CONFLICT on duplicate names." },
+    { kind: listKindShape, id: positiveInt, name: z.string().min(1) },
+    (args: { kind: "company" | "posting"; id: number; name: string }) =>
+      api.request("PATCH", `${listsPath(args.kind)}/${args.id}`, { body: { name: args.name } }),
+  );
+
+  tool(
+    "delete_list",
+    {
+      description:
+        "Delete a list by id (kind 'company' or 'posting'). The companies/postings in it are NOT deleted, they just leave the list. " +
+        "Ask the user for explicit confirmation first, then pass confirm: true.",
+    },
+    { kind: listKindShape, id: positiveInt, confirm: z.boolean().optional() },
+    (args: { kind: "company" | "posting"; id: number; confirm?: boolean }) => {
+      if (args.confirm !== true) {
+        throw new ToolRejection("Ask the user for explicit confirmation, then call again with confirm: true");
+      }
+      return api.request("DELETE", `${listsPath(args.kind)}/${args.id}`);
     },
     { destructiveHint: true },
   );
