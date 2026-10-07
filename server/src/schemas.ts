@@ -254,14 +254,59 @@ export const contextResponseSchema = {
 
 export const contextPutBodySchema = {
   type: 'object',
-  required: ['content'],
+  required: ['content', 'expectedUpdatedAt'],
   additionalProperties: false,
   properties: {
     content: { type: 'string', maxLength: 100000, description: 'The one shared context note (shown to AI models). Max 100000 characters' },
     expectedUpdatedAt: {
       type: 'string',
-      description: 'Optimistic-concurrency guard: pass the updatedAt value from the last GET /api/context; the write fails with 409 if it no longer matches',
+      description: 'Required optimistic-concurrency guard: pass the updatedAt value from the last GET /api/context; the write fails with 409 if it no longer matches',
     },
+    force: {
+      type: 'boolean',
+      description: 'Bypass the shrink guard (422 SHRINK_GUARD); set only after the user explicitly confirmed a large reduction',
+    },
+  },
+} as const;
+
+export const contextHistoryListResponseSchema = {
+  type: 'object',
+  required: ['items'],
+  properties: {
+    items: {
+      type: 'array',
+      description: 'Earlier versions of the note, newest first. Content is omitted; fetch a version by id',
+      items: {
+        type: 'object',
+        required: ['id', 'updatedAt', 'replacedAt', 'length'],
+        properties: {
+          id: { type: 'integer' },
+          updatedAt: { type: 'string', description: 'When this version was written' },
+          replacedAt: { type: 'string', description: 'When this version was overwritten' },
+          length: { type: 'integer', description: 'Content length in characters' },
+        },
+      },
+    },
+  },
+} as const;
+
+export const contextHistoryEntrySchema = {
+  type: 'object',
+  required: ['id', 'content', 'updatedAt', 'replacedAt'],
+  properties: {
+    id: { type: 'integer' },
+    content: { type: 'string' },
+    updatedAt: { type: 'string', description: 'When this version was written' },
+    replacedAt: { type: 'string', description: 'When this version was overwritten' },
+  },
+} as const;
+
+export const contextHistoryParamsSchema = {
+  type: 'object',
+  required: ['id'],
+  additionalProperties: false,
+  properties: {
+    id: { type: 'integer', minimum: 1, description: 'Context history version id (positive integer)' },
   },
 } as const;
 

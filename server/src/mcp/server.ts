@@ -119,6 +119,12 @@ const companyPatchShape = z
 
 const contextUpdateShape = z.object({
   content: z.string().max(100000),
+  confirmShrink: z
+    .boolean()
+    .optional()
+    .describe(
+      "Set true ONLY after the user explicitly confirmed that the note should shrink drastically; otherwise leave unset",
+    ),
 });
 
 // ---------------------------------------------------------------------------
@@ -523,10 +529,13 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
         "full content preserving everything still relevant. Never log chatter or temporary details, only " +
         "durable facts: target roles, preferences, strategy, decisions. The write is checked automatically " +
         "against the version returned by the last get_context: it fails fast with CONFLICT (and forgets the " +
-        "remembered version) when the note changed meanwhile, so no protocol parameter is needed.",
+        "remembered version) when the note changed meanwhile, so no protocol parameter is needed. " +
+        "Every overwrite is kept in a version history the user can restore from. A rewrite that cuts a long " +
+        "note to under half its length is refused with SHRINK_GUARD; keep the existing content instead, and " +
+        "set confirmShrink=true only after the user explicitly agreed to the reduction.",
     },
     contextUpdateShape,
-    (args: { content: string }) => {
+    (args: { content: string; confirmShrink?: boolean }) => {
       if (knownContextUpdatedAt === undefined) {
         throw new ToolRejection(
           "Call get_context first so you don't overwrite changes you haven't seen.",
@@ -536,7 +545,11 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
 
       return api
         .request<ApiContext>("PUT", "/api/context", {
-          body: { content: args.content, expectedUpdatedAt: knownContextUpdatedAt },
+          body: {
+            content: args.content,
+            expectedUpdatedAt: knownContextUpdatedAt,
+            ...(args.confirmShrink === true ? { force: true } : {}),
+          },
         })
         .then((result) => {
           knownContextUpdatedAt = result.updatedAt;
@@ -548,6 +561,14 @@ export function buildMcpServer(api: ApiClient, options: McpServerOptions) {
             throw new ToolRejection(
               "The context changed since you last read it. Call get_context again, merge your changes, and retry.",
               "CONFLICT",
+            );
+          }
+          if (cause instanceof ApiCallError && cause.code === "SHRINK_GUARD") {
+            // The note did not change, so the remembered version stays valid.
+            throw new ToolRejection(
+              `Refused: your rewrite would drop most of the note (${cause.message}) Re-read it with get_context ` +
+                "and keep the existing content. Ask the user before retrying with confirmShrink=true.",
+              "SHRINK_GUARD",
             );
           }
           throw cause;

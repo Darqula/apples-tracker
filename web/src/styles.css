@@ -855,6 +855,41 @@ section > .detail-label {
   margin: 10px 0 0;
 }
 
+.context-history {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.context-history-heading {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.context-history-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.context-history-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.context-history-item button {
+  margin-left: auto;
+}
+
 .status-line {
   margin: 0 0 0 auto;
   display: inline-flex;

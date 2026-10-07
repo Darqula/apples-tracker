@@ -46,6 +46,8 @@ describe("OpenAPI document", () => {
         "/api/postings",
         "/api/postings/{id}",
         "/api/context",
+        "/api/context/history",
+        "/api/context/history/{id}",
         "/api/guide",
         "/api/health",
       ]),

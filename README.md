@@ -34,7 +34,8 @@ web UI; AI assistants use an HTTP API (OpenAPI spec) or an MCP server over the s
   an item just removes it from its lists.
 - **AI Context tab** — one editable text area holding shared memory for the whole job
   search (target roles, CV highlights, preferences, current strategy, open questions).
-  Assistants read it at the start of a session and update it as things change.
+  Assistants read it at the start of a session and update it as things change. Every
+  overwrite is kept in a version history (last 50) that you can view and restore from the tab.
 - **MCP server (primary AI interface)** — tools for search/get/create/update/delete of
   postings and companies, plus read/update of the shared context. Ships usage
   instructions to the model (see "AI usage guide").
@@ -91,10 +92,11 @@ is passed; the UI asks for confirmation first.
 | GET/POST | `/api/companies` | list supports `q`, `sort`, includes `postingCount` |
 | GET/PATCH/DELETE | `/api/companies/:id` | GET includes its postings; DELETE accepts `cascade` |
 | GET/POST | `/api/company-lists`, `/api/posting-lists` | named lists with `memberCount`; `PATCH`/`DELETE` on `/:id` rename/delete |
-| GET/PUT | `/api/context` | shared job-search memory; PUT replaces `content` |
+| GET/PUT | `/api/context` | shared job-search memory; PUT replaces `content`, requires `expectedUpdatedAt`, and refuses (422 `SHRINK_GUARD`) erasing the note or cutting a 200+ char note below half its length unless `force: true` |
+| GET | `/api/context/history`, `/api/context/history/:id` | earlier versions of the note (newest 50 kept); restore by PUTting a version's content |
 | GET | `/api/guide` | the AI usage guide as Markdown |
 
-Errors: `{ "error": { "code", "message" } }` with 400/404/409 status codes.
+Errors: `{ "error": { "code", "message" } }` with 400/404/409/422 status codes.
 The server binds to `127.0.0.1` only.
 
 ## MCP tools
@@ -109,7 +111,9 @@ needs only one call.
 
 Built-in safeguards: delete tools refuse unless called with `confirm: true` (the guide
 tells the model to ask you first); `update_context` refuses until `get_context` has been
-called and rejects the write if the note changed since (no blind overwrites); search
+called and rejects the write if the note changed since (no blind overwrites), and a rewrite
+that drops a long note below half its length is refused unless the model sets `confirmShrink`
+(it is told to ask you first); search
 results are compact and omit `aiContext` (use `get_posting` / `get_company` for it).
 
 ## AI usage guide

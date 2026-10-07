@@ -386,10 +386,11 @@ describe("mcp server", () => {
     // The DB stores timestamps with millisecond precision; the previous test that
     // rewrote the context may have run in the same millisecond as this REST write.
     await new Promise((resolve) => setTimeout(resolve, 20));
+    const current = (await app.inject({ method: "GET", url: "/api/context" })).json<never>();
     await app.inject({
       method: "PUT",
       url: "/api/context",
-      payload: { content: "rest-installed content" },
+      payload: { content: "rest-installed content", expectedUpdatedAt: current.updatedAt },
     });
 
     const stale = await callTool(client, "update_context", { content: "stale overwrite" });
@@ -416,8 +417,26 @@ describe("mcp server", () => {
     const updateContext = tools.tools.find((t) => t.name === "update_context");
     expect(updateContext).toBeDefined();
     const properties = (updateContext?.inputSchema as { properties: Record<string, unknown> }).properties;
-    expect(Object.keys(properties)).toEqual(["content"]);
+    expect(Object.keys(properties)).toEqual(["content", "confirmShrink"]);
     expect(properties).not.toHaveProperty("expectedUpdatedAt");
+  });
+
+  it("update_context refuses a drastic shrink, keeps the note, and allows confirmShrink", async () => {
+    decode(await callTool(client, "get_context"));
+    const long = "durable fact. ".repeat(40);
+    decode(await callTool(client, "update_context", { content: long }));
+
+    const refused = await callTool(client, "update_context", { content: "tiny" });
+    expect(refused.isError).toBe(true);
+    expect(decode(refused).code).toBe("SHRINK_GUARD");
+    expect((await app.inject({ method: "GET", url: "/api/context" })).json<never>().content).toBe(long);
+
+    // The note did not change, so a normal update works without re-reading.
+    const normal = decode(await callTool(client, "update_context", { content: `${long}more` }));
+    expect(normal.content).toBe(`${long}more`);
+
+    const forced = decode(await callTool(client, "update_context", { content: "tiny", confirmShrink: true }));
+    expect(forced.content).toBe("tiny");
   });
 
   it("surfaces unreachable-API errors with the startup hint", async () => {

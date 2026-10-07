@@ -240,13 +240,42 @@ export function getContext(): Promise<ContextNote> {
   return request<ContextNote>("/api/context");
 }
 
-// Passing `expectedUpdatedAt` makes the server refuse the write with a 409
-// CONFLICT ApiError when the note changed since it was last fetched.
-export function updateContext(content: string, expectedUpdatedAt?: string): Promise<ContextNote> {
+// The server refuses the write with a 409 CONFLICT ApiError when the note
+// changed since `expectedUpdatedAt` was fetched, and with a 422 SHRINK_GUARD
+// ApiError when it would cut a long note below half its length (unless `force`).
+export function updateContext(
+  content: string,
+  expectedUpdatedAt: string,
+  force = false,
+): Promise<ContextNote> {
   return request<ContextNote>("/api/context", {
     method: "PUT",
-    body: expectedUpdatedAt === undefined ? { content } : { content, expectedUpdatedAt },
+    body: force ? { content, expectedUpdatedAt, force } : { content, expectedUpdatedAt },
   });
+}
+
+// Earlier versions of the context note (every overwrite keeps the old one).
+export interface ContextVersionSummary {
+  id: number;
+  updatedAt: string; // when this version was written
+  replacedAt: string; // when it was overwritten
+  length: number;
+}
+
+export interface ContextVersion {
+  id: number;
+  content: string;
+  updatedAt: string;
+  replacedAt: string;
+}
+
+export async function listContextHistory(): Promise<ContextVersionSummary[]> {
+  const body = await request<{ items: ContextVersionSummary[] }>("/api/context/history");
+  return body.items;
+}
+
+export function getContextVersion(id: number): Promise<ContextVersion> {
+  return request<ContextVersion>(`/api/context/history/${encodeURIComponent(String(id))}`);
 }
 
 export function createCompany(input: CompanyInput): Promise<Company> {

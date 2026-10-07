@@ -15,6 +15,12 @@ test("edit shows Unsaved changes, Save confirms and persists after reload", asyn
   await expect(page.locator(".status-dirty")).toHaveText("Unsaved changes");
 
   await page.locator('.context-actions button:has-text("Save")').click();
+
+  // The seeded note is long, so cutting it to a few lines trips the server's
+  // shrink guard: the UI asks before sending the draft again with force.
+  const shrinkBanner = page.locator(".banner-warning");
+  await expect(shrinkBanner).toContainText("less than 50%");
+  await shrinkBanner.locator('button:has-text("Save anyway")').click();
   await expect(page.locator(".status-saved")).toHaveText("Saved");
 
   await page.reload();
@@ -36,7 +42,10 @@ test("conflict flow: API write behind the UI triggers the changed-elsewhere bann
   expect(initial.length).toBeGreaterThan(0);
 
   // Someone else (the API) overwrites the note while the UI holds the old version.
-  const put = await page.request.put("/api/context", { data: { content: apiContent } });
+  const current = await (await page.request.get("/api/context")).json();
+  const put = await page.request.put("/api/context", {
+    data: { content: apiContent, expectedUpdatedAt: current.updatedAt },
+  });
   expect(put.ok()).toBeTruthy();
 
   // Make an edit in the UI and save → 409 → the warning banner appears.
@@ -58,4 +67,25 @@ test("conflict flow: API write behind the UI triggers the changed-elsewhere bann
   expect(value).toBe(apiContent);
   // The conflict is resolved; the draft is clean again.
   await expect(page.locator(".status-dirty")).toHaveCount(0);
+});
+
+test("history lists earlier versions and loads one into the editor as a draft", async ({ page }) => {
+  // Create two versions through the API so the test does not depend on earlier ones.
+  for (const content of ["# History A", "# History B"]) {
+    const current = await (await page.request.get("/api/context")).json();
+    const put = await page.request.put("/api/context", {
+      data: { content, expectedUpdatedAt: current.updatedAt },
+    });
+    expect(put.ok()).toBeTruthy();
+  }
+
+  await openContext(page);
+  await page.locator('.context-actions button:has-text("History")').click();
+
+  const items = page.locator(".context-history-item");
+  await expect(items.first()).toBeVisible({ timeout: 10_000 });
+
+  await items.first().locator('button:has-text("Load into editor")').click();
+  // Loading only fills the editor; the user still has to save it.
+  await expect(page.locator(".status-dirty")).toHaveText("Unsaved changes");
 });

@@ -13,6 +13,9 @@ context note**.
   decisions. **Never** log chatter or temporary details into the context.
 - `update_context` **replaces the whole content**. Always read the current value
   first, then rewrite it **in full, preserving the existing content** plus your changes.
+- Every overwrite is kept in a version history the user can restore from, and a rewrite
+  that cuts a long note to under half its length is refused (`SHRINK_GUARD`). Do not
+  shorten the note unless the user asked; set `confirmShrink=true` only after they agreed.
 
 ## Field semantics
 

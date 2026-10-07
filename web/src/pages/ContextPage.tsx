@@ -14,7 +14,13 @@ import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ContextNote } from "../api";
-import { ApiError, getContext, updateContext } from "../api";
+import {
+  ApiError,
+  getContext,
+  getContextVersion,
+  listContextHistory,
+  updateContext,
+} from "../api";
 import { decideOnRefetch, isDirty } from "../contextState";
 import type { NavigateFn, RouteParams } from "../hash";
 
@@ -43,6 +49,10 @@ function isConflict(error: unknown): boolean {
   return error instanceof ApiError && error.code === "CONFLICT" && error.status === 409;
 }
 
+function isShrinkGuard(error: unknown): boolean {
+  return error instanceof ApiError && error.code === "SHRINK_GUARD" && error.status === 422;
+}
+
 export default function ContextPage(_props: ContextPageProps) {
   const queryClient = useQueryClient();
 
@@ -61,6 +71,15 @@ export default function ContextPage(_props: ContextPageProps) {
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [savedConfirmation, setSavedConfirmation] = useState(false);
+  // Set when the server's shrink guard refused the draft; holds the token to resend with.
+  const [shrink, setShrink] = useState<{ message: string; token: string } | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  const historyQuery = useQuery({
+    queryKey: ["context-history"],
+    queryFn: listContextHistory,
+    enabled: historyOpen,
+  });
 
   const dirty = baseline !== null ? isDirty(draft, baseline.content) : false;
   const canSave = dirty && !saving;
@@ -81,6 +100,7 @@ export default function ContextPage(_props: ContextPageProps) {
     applyDraft(note.content);
     setBaseline({ content: note.content, updatedAt: note.updatedAt });
     setConflict(false);
+    setShrink(null);
     setActionError(null);
   };
 
@@ -101,24 +121,33 @@ export default function ContextPage(_props: ContextPageProps) {
     // Seed the cache so an immediate follow-up refetch skips the round trip.
     queryClient.setQueryData<ContextNote>(["context"], saved);
     setConflict(false);
+    setShrink(null);
+    void queryClient.invalidateQueries({ queryKey: ["context-history"] });
     confirmSaved();
   };
 
-  const save = async () => {
-    const base = baseline;
-    if (base === null || saveInFlight.current || !dirty || saving) return;
+  // Shared write path. `getToken` supplies the concurrency token (the last
+  // known updatedAt, or a freshly read one for "Overwrite anyway"); `force`
+  // bypasses the server's shrink guard after the user confirmed it.
+  const submit = async (getToken: () => Promise<string>, force = false) => {
     saveInFlight.current = true;
     setSaving(true);
     setActionError(null);
     setSavedConfirmation(false);
+    let token = "";
     try {
-      const saved = await updateContext(draft, base.updatedAt);
-      applySaved(saved);
+      token = await getToken();
+      applySaved(await updateContext(draft, token, force));
     } catch (error) {
       if (isConflict(error)) {
         // The stored note changed since we loaded it — keep the draft and let
         // the banner offer the two ways out.
         setConflict(true);
+        setShrink(null);
+      } else if (isShrinkGuard(error)) {
+        // The draft would drop most of the note: ask before sending it.
+        setConflict(false);
+        setShrink({ message: messageOf(error, "The note would shrink drastically."), token });
       } else {
         setActionError(messageOf(error, "Failed to save the note."));
       }
@@ -128,28 +157,40 @@ export default function ContextPage(_props: ContextPageProps) {
     }
   };
 
+  const save = async () => {
+    const base = baseline;
+    if (base === null || saveInFlight.current || !dirty || saving) return;
+    await submit(async () => base.updatedAt);
+  };
+
   // Banner choice 2: re-read the stored updatedAt right before overwriting
   // (the whole point of the action is to clobber whatever is stored now),
   // keeping the draft exactly as shown.
   const overwriteAnyway = async () => {
     if (saveInFlight.current) return;
-    saveInFlight.current = true;
-    setSaving(true);
-    setActionError(null);
-    setSavedConfirmation(false);
+    await submit(async () => (await getContext()).updatedAt);
+  };
+
+  // Shrink banner: resend the same draft with the same token, forced.
+  const saveShrunkAnyway = async () => {
+    const pending = shrink;
+    if (pending === null || saveInFlight.current) return;
+    setShrink(null);
+    await submit(async () => pending.token, true);
+  };
+
+  // History: put an earlier version into the editor as an unsaved draft; the
+  // user still has to Save it (so the usual guards and history apply).
+  const loadVersion = async (id: number) => {
+    if (saveInFlight.current) return;
     try {
-      const latest = await getContext();
-      applySaved(await updateContext(draft, latest.updatedAt));
+      const version = await getContextVersion(id);
+      if (dirty && !window.confirm("Replace your unsaved edits with this earlier version?")) return;
+      applyDraft(version.content);
+      setShrink(null);
+      setActionError(null);
     } catch (error) {
-      if (isConflict(error)) {
-        // Raced again between reading `latest` and writing — the banner stays.
-        setConflict(true);
-      } else {
-        setActionError(messageOf(error, "Failed to save the note."));
-      }
-    } finally {
-      saveInFlight.current = false;
-      setSaving(false);
+      setActionError(messageOf(error, "Failed to load that version."));
     }
   };
 
@@ -289,12 +330,40 @@ export default function ContextPage(_props: ContextPageProps) {
         </div>
       )}
 
+      {shrink && (
+        <div className="banner-warning" role="alert">
+          <p>{shrink.message}</p>
+          <div className="banner-actions">
+            <button
+              type="button"
+              className="button-ghost"
+              disabled={saving}
+              onClick={() => setShrink(null)}
+            >
+              Keep editing
+            </button>
+            <button
+              type="button"
+              className="button"
+              disabled={saving}
+              onClick={() => void saveShrunkAnyway()}
+            >
+              Save anyway
+            </button>
+          </div>
+        </div>
+      )}
+
       {actionError && <p className="form-message error">{actionError}</p>}
 
       <textarea
         className="context-textarea"
         value={draft}
-        onChange={(event) => applyDraft(event.target.value)}
+        onChange={(event) => {
+          // The shrink warning described the previous draft; it no longer applies.
+          setShrink(null);
+          applyDraft(event.target.value);
+        }}
         onKeyDown={onTextareaKeyDown}
         spellCheck={false}
         aria-label="AI context note"
@@ -314,6 +383,14 @@ export default function ContextPage(_props: ContextPageProps) {
         >
           Revert
         </button>
+        <button
+          type="button"
+          className="button-ghost"
+          aria-expanded={historyOpen}
+          onClick={() => setHistoryOpen((open) => !open)}
+        >
+          {historyOpen ? "Hide history" : "History"}
+        </button>
         <p className="status-line" aria-live="polite">
           <span>Last saved {formatTimestamp(updatedAt)}</span>
           {saving && <span>Saving…</span>}
@@ -321,6 +398,40 @@ export default function ContextPage(_props: ContextPageProps) {
           {!dirty && savedConfirmation ? <span className="status-saved">Saved</span> : null}
         </p>
       </div>
+
+      {historyOpen && (
+        <section className="context-history" aria-label="Earlier versions of the note">
+          <h3 className="context-history-heading">Earlier versions</h3>
+          {historyQuery.isPending ? (
+            <p className="muted">Loading…</p>
+          ) : historyQuery.isError ? (
+            <p className="form-message error">
+              {messageOf(historyQuery.error, "Failed to load the history.")}
+            </p>
+          ) : historyQuery.data.length === 0 ? (
+            <p className="muted">No earlier versions yet — each overwrite will be kept here.</p>
+          ) : (
+            <ul className="context-history-list">
+              {historyQuery.data.map((version) => (
+                <li key={version.id} className="context-history-item">
+                  <span>Replaced {formatTimestamp(version.replacedAt)}</span>
+                  <span className="muted">{version.length} chars</span>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => void loadVersion(version.id)}
+                  >
+                    Load into editor
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="muted">
+            Loading a version only fills the editor — press Save to make it the current note.
+          </p>
+        </section>
+      )}
     </div>
   );
 }
