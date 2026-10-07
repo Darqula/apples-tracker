@@ -1,7 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
-import { DEFAULT_HOST, DEFAULT_PORT } from "./config.js";
 
 export async function registerOpenApi(app: FastifyInstance): Promise<void> {
   app.register(swagger, {
@@ -17,7 +16,8 @@ export async function registerOpenApi(app: FastifyInstance): Promise<void> {
           "Note: the `q` search parameter matches only the job title and the company name — " +
           "it never matches the posting description or the AI context notes.",
       },
-      servers: [{ url: `http://${DEFAULT_HOST}:${DEFAULT_PORT}` }],
+      // Relative: the API may be listening on a fallback port, and "Try it out" must hit this server.
+      servers: [{ url: "/" }],
       tags: [
         { name: "Companies", description: "Create, list, inspect, update and delete companies" },
         { name: "Postings", description: "Manage job postings and track their application state" },

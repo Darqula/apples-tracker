@@ -1,9 +1,17 @@
+import { readApiPort } from "../api-port.js";
 import { DEFAULT_HOST, DEFAULT_PORT } from "../config.js";
 
 export const DEFAULT_API_BASE_URL = `http://${DEFAULT_HOST}:${DEFAULT_PORT}`;
 
+/**
+ * Where the REST API is: APPLES_API_URL if set, else the port a running server
+ * recorded next to the database (it moves off the default when that port is
+ * busy), else the default. Cheap enough to call before every request.
+ */
 export function resolveApiBaseUrl(): string {
-  return process.env.APPLES_API_URL ?? DEFAULT_API_BASE_URL;
+  if (process.env.APPLES_API_URL !== undefined) return process.env.APPLES_API_URL;
+  const port = readApiPort();
+  return port === undefined ? DEFAULT_API_BASE_URL : `http://${DEFAULT_HOST}:${port}`;
 }
 
 export class ApiCallError extends Error {
@@ -42,11 +50,12 @@ export function unreachableMessage(baseUrl: string): string {
   return `Cannot reach the Apples Tracker API at ${baseUrl}. Start it with \`npm run dev\` (or \`npm start\`).`;
 }
 
-export function createApiClient(baseUrl: string): ApiClient {
-  const trimmed = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
-
+/** `baseUrl` may be a function so the address is re-resolved for every request. */
+export function createApiClient(baseUrl: string | (() => string)): ApiClient {
   return {
     async request<T>(method: string, path: string, options?: RequestOptions): Promise<T> {
+      const resolved = typeof baseUrl === "function" ? baseUrl() : baseUrl;
+      const trimmed = resolved.endsWith("/") ? resolved.slice(0, -1) : resolved;
       const url = `${trimmed}${path}${options?.query ? formatQuery(options.query) : ""}`;
 
       let response: Response;

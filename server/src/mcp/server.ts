@@ -153,7 +153,7 @@ function textResult(data: unknown) {
   });
 }
 
-function errorResult(error: unknown, baseUrl: string) {
+function errorResult(error: unknown, baseUrl: string | (() => string)) {
   let toolError: ToolError;
 
   if (error instanceof Error) {
@@ -171,7 +171,7 @@ function errorResult(error: unknown, baseUrl: string) {
   return Promise.resolve({
     isError: true as const,
     content: [
-      { type: "text" as const, text: JSON.stringify({ baseUrl, ...toolError }, null, 2) },
+      { type: "text" as const, text: JSON.stringify({ baseUrl: typeof baseUrl === "function" ? baseUrl() : baseUrl, ...toolError }, null, 2) },
     ],
   });
 }
@@ -182,7 +182,7 @@ function errorResult(error: unknown, baseUrl: string) {
 
 export interface McpServerOptions {
   /** Base URL of the REST API, surfaced to models in error messages. */
-  baseUrl: string;
+  baseUrl: string | (() => string);
 }
 
 export function buildMcpServer(api: ApiClient, options: McpServerOptions) {

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_DB_PATH } from "./config.js";
 import sqlite, { type Database } from "better-sqlite3";
 
 export type Db = Database;
@@ -29,11 +30,6 @@ function runMigrations(db: Db) {
     })();
   }
 }
-
-const DEFAULT_DB_PATH = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../data/apples.db",
-);
 
 export function openDb(path_ = process.env.DB_PATH ?? DEFAULT_DB_PATH): Db {
   if (path_ !== ":memory:") {

@@ -135,7 +135,7 @@ as the MCP resource `apples://guide`, and at `GET /api/guide` for REST clients. 
 
 ```
 npm install
-npm run dev      # development: API on :3001, web (hot reload) on :5173
+npm run dev      # development: API on :3001 (next free port if busy), web (hot reload) on :5173
 npm run seed     # optional demo data (add `-- --reset` to wipe first)
 npm test         # unit tests; `npm run test:e2e` runs the browser tests
 
@@ -143,6 +143,10 @@ npm run build && npm start   # single process: API + UI at http://127.0.0.1:3001
 ```
 
 Data lives in `data/apples.db` (override with `DB_PATH`); back it up by copying the file.
+
+If port 3001 is busy, the API (both `npm run dev` and `npm start`) moves to the next free port
+and logs it; set `PORT` to pin one (then a busy port is an error). The server records the port it
+actually uses in `.api-port` next to the database file, which is how the MCP server finds it.
 
 **Connect an AI assistant (MCP).** The API must be running (`npm run dev` or `npm start`).
 Claude Code:
@@ -153,4 +157,5 @@ claude mcp add apples-tracker -- npm run mcp --prefix <repo path>
 
 or any MCP client config: command `npm`, args `["run","mcp","--prefix","<repo path>"]`,
 where `<repo path>` is the absolute path of this repository.
-Set `APPLES_API_URL` if the API is not at `http://127.0.0.1:3001`.
+The MCP server locates the API on every request: `APPLES_API_URL` if set, otherwise the port
+recorded in `.api-port` by a running server (same `DB_PATH`), otherwise `http://127.0.0.1:3001`.
