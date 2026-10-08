@@ -2,8 +2,18 @@ import { buildApp } from "./app.js";
 import type { AddressInfo } from "node:net";
 import { removeApiPort, writeApiPort } from "./api-port.js";
 import { DEFAULT_HOST, DEFAULT_PORT } from "./config.js";
+import { openDb } from "./db.js";
+import { startBackups } from "./backup.js";
 
-const app = buildApp();
+const db = openDb();
+const app = buildApp(db);
+
+// Snapshot before serving any request, then daily; stopped and the db closed on shutdown.
+const stopBackups = await startBackups(db, app.log);
+app.addHook("onClose", async () => {
+  stopBackups();
+  db.close();
+});
 
 const MAX_PORT_ATTEMPTS = 20;
 

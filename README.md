@@ -142,7 +142,11 @@ npm test         # unit tests; `npm run test:e2e` runs the browser tests
 npm run build && npm start   # single process: API + UI at http://127.0.0.1:3001
 ```
 
-Data lives in `data/apples.db` (override with `DB_PATH`); back it up by copying the file.
+Data lives in `data/apples.db` (override with `DB_PATH`). On server start (skipped if the newest
+backup is under an hour old) and then daily, a consistent snapshot is written to `backups/` next to
+the DB file (`data/backups/` by default) and the newest 7 are kept. To restore, stop the server and
+copy a snapshot over `apples.db` (delete any `apples.db-wal`/`-shm` files first). Don't back up by
+copying the live file: in WAL mode that can miss data.
 
 If port 3001 is busy, the API (both `npm run dev` and `npm start`) moves to the next free port
 and logs it; set `PORT` to pin one (then a busy port is an error). The server records the port it
