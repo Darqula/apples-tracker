@@ -36,3 +36,17 @@ inline (see the size threshold below).
 - ALWAYS `git add` (stage — NEVER `git commit`) the prior run's uncommitted output
   before the next delegation, so the next report attributes only the new edits and the
   diff is not silently truncated.
+
+**When the report says `Action required` (the model failed):**
+
+- If a cheap-coder report contains `**Action required:** MODEL_NEEDED …`, the opencode
+  model call itself failed (unavailable model, unparseable stream, usage limit, …) and no
+  usable work was produced. Do NOT review it as a finished task and do NOT just retry.
+- ASK THE USER which opencode model to use (`AskUserQuestion`), offering the report's
+  `**Suggested models:**` as options (they come from opencode's recently-used list and may
+  be stale). The cheap-coder subagent cannot ask; you can.
+- Re-delegate the SAME task with `MODEL: provider/model` as its first line, and save the
+  user's answer as a single `provider/model` line in `.claude/cheap-coder.model` so later
+  delegations use it without asking again (suggest adding that file to `.gitignore` if the
+  choice is personal). If the report notes `CHEAP_CODER_MODEL` is set, that variable
+  overrides the file — tell the user to change or unset it instead.

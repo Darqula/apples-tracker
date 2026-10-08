@@ -44,11 +44,20 @@ the task you intend to delegate).
    Run it from the **repository root** — the script path is relative to it (the
    engine then runs opencode from the git root on its own).
 
-4. **Review the report yourself.** It ends with a status, the changed files, a diff
+4. **Check for `Action required` first.** If the report has an
+   `**Action required:** MODEL_NEEDED …` line, the model call itself failed and nothing
+   usable was produced — do not review it. Ask the user which opencode model to use
+   (`AskUserQuestion`; offer the `**Suggested models:**` from the report as options, noting
+   they may be stale), re-run the SAME task with `MODEL: provider/model` as its first line,
+   and write the answer as a single `provider/model` line to `.claude/cheap-coder.model` so
+   later runs use it without asking (suggest adding that file to `.gitignore`; if the report
+   says `CHEAP_CODER_MODEL` is set, it overrides the file — tell the user to change it).
+   See **Choosing the model** below.
+5. **Review the report yourself.** It ends with a status, the changed files, a diff
    size, a bounded diff preview (<500 lines), warnings, and a session id. Run `git diff`
    for anything the preview omitted. You are the reviewer — do not accept blindly. The
    engine never stages or commits; changes are left unstaged for you.
-5. **Report to the user**: what changed, whether it's correct, and any follow-up. To keep
+6. **Report to the user**: what changed, whether it's correct, and any follow-up. To keep
    refining the *same* opencode run instead of starting over, see **Resuming a previous
    run** below.
 
@@ -74,7 +83,15 @@ CHEAP_CODER_TASK
 The argument form works too (`bash .claude/agents/lib/cheap-coder-run.sh 'RESUME-SESSION: ses_…'`),
 but the heredoc is easier for a multi-line follow-up. Omit the header to start fresh.
 
-## Overriding the model
+## Choosing the model
+
+The engine picks the coding model in this order (first hit wins): a `MODEL:` header on
+the task (one run) → the `CHEAP_CODER_MODEL` environment variable → the one-line project
+file `.claude/cheap-coder.model` (`provider/model[#variant]`; `#` comments and blank lines
+ignored) → nothing, in which case opencode auto-picks its own default. Do not count on
+that last case: `opencode run` ignores the model the user selected in opencode's
+interactive UI, and its auto-picked default can fail outright (see step 4,
+`Action required`).
 
 Prepend a `MODEL: <provider/model>` header (optionally `provider/model#variant`) as the
 first line of the task to pin the coding model for that run:
@@ -87,11 +104,9 @@ MODEL: opencode-go/glm-5.3-flash
 CHEAP_CODER_TASK
 ```
 
-It composes freely with `RESUME-SESSION:` (either order). No header → the opencode config
-default — which only works if that default is a valid model (opencode v2 fails with
-`provider.internal` otherwise; the report will say so). A malformed model id fails the run
-fast rather than silently using some other default — the report tells you the expected
-format, so fix the id and re-run.
+It composes freely with `RESUME-SESSION:` (either order). A malformed model id (in the
+header, the env var or the file) fails the run fast rather than silently using some other
+default — the report tells you the expected format, so fix the id and re-run.
 
 ## Requirements
 

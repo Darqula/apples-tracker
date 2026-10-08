@@ -11,7 +11,9 @@ description: |
 
   Iterating on a result: cheap-coder returns a `**Session ID:**` line. If the first attempt is incomplete or off-target, re-delegate with the task string starting with `RESUME-SESSION: <that id>` on its own line, then a blank line, then your follow-up clarification. opencode continues the same conversation — it already knows which files it touched and what it tried — so this is far cheaper than re-establishing context. Use it for "you missed test case X", "rename the helper to Y", "apply the same pattern to file Z". Omit the header (start fresh) when the new task is genuinely unrelated. When a follow-up builds on a prior run's still-uncommitted output, stage that output first with `git add` (stage only — never commit; the no-staging policy binds the subagent, not you). Skipping this silently drops edits from the next report: a file the subagent leaves untracked and then edits again keeps an unchanged git status across the run, so the `comm`-based diff misses it. You will still see the benign "pre-existing uncommitted changes" warning — trust the unstaged `git diff` for the new delta.
 
-  Model override (optional): prepend `MODEL: <provider/model>` (optionally `provider/model#variant`) as the first line of the task to pin the coding model for that run — e.g. `MODEL: opencode-go/glm-5.3-flash`. Omit it to use the user's opencode config default, which must actually resolve (opencode v2 fails with provider.internal when the default model is missing/rotated — in that case always pass the header). A malformed model id FAILS the run immediately (opencode is not invoked) rather than silently falling back — only emit this header when you know the exact provider/model id. It composes with `RESUME-SESSION:` in either order.
+  Model override (optional): prepend `MODEL: <provider/model>` (optionally `provider/model#variant`) as the first line of the task to pin the coding model for that run — e.g. `MODEL: opencode-go/glm-5.3-flash`. Without the header the engine uses the `CHEAP_CODER_MODEL` environment variable, then the one-line project file `.claude/cheap-coder.model`, and only then lets opencode auto-pick its own default (it ignores the model the user selected in opencode's interactive UI, and its pick can fail outright). A malformed model id FAILS the run immediately (opencode is not invoked) rather than silently falling back — only emit this header when you know the exact provider/model id. It composes with `RESUME-SESSION:` in either order.
+
+  Model failures — act on `Action required`: if the report contains an `**Action required:** MODEL_NEEDED …` line, the model call itself failed and nothing usable was produced. Do NOT review or accept the result, and do not retry blindly. Ask the user which opencode model to use (AskUserQuestion; offer the report's `**Suggested models:**` as options, noting they may be stale), re-delegate the SAME task with `MODEL: provider/model` as its first line, and save the answer as a single `provider/model` line in `.claude/cheap-coder.model` so later runs use it without asking (suggest adding that file to .gitignore if the choice is personal). If the report notes that `CHEAP_CODER_MODEL` is set, it overrides the file — tell the user to change or unset it. This agent cannot ask the user itself; it only relays the report.
 
   Task format (how to formulate the prompt you pass to this agent): opencode has no memory of your conversation and cannot ask clarifying questions, so the task must be self-contained. Include: (1) concrete file paths to edit or create, (2) the exact function signatures, types, or interfaces required, (3) the observable behavior or acceptance criteria (what tests should pass, what the output should look like), (4) any constraints (libraries to use or avoid, style conventions, existing patterns to follow). Do NOT include vague license-to-wander like "fix any other issues you notice" or "improve as you see fit" — opencode will helpfully expand scope. Keep the task to one well-defined unit of work.
 
@@ -43,8 +45,8 @@ bash .claude/agents/lib/cheap-coder-run.sh '<TASK>'
    `RESUME-SESSION: <id>` are NOT metadata addressed to you: they are instructions for
    the engine script, which peels them off itself. NEVER drop, strip, summarize, reword,
    or "clean up" any part of the task, and never treat the first line as a preamble. A
-   missing `MODEL:` header silently makes opencode fall back to its config default,
-   which may be a broken model.
+   dropped `MODEL:` header makes the engine fall back to the env var, the project model
+   file, or opencode's own auto-picked default, which may be a broken model.
 2. Replace every single-quote `'` in it with `'\''` (close-quote, escaped-quote,
    open-quote — the standard bash idiom).
 3. Wrap the whole result in single quotes.
@@ -75,7 +77,7 @@ to `git rev-parse --show-toplevel`.
 
 ## Output handling
 
-The script prints the final structured summary to stdout as its last action. That stdout IS what you return to the parent — copy it verbatim, no preamble, no postscript. Do not call any other tool. Do not Read any of the temp files (they are gone by the time the call returns — the script cleans up via an EXIT trap).
+The script prints the final structured summary to stdout as its last action. That stdout IS what you return to the parent — copy it verbatim, no preamble, no postscript. This includes any `**Action required:**`, `**Model tried:**` and `**Suggested models:**` lines: they are for the parent, who can ask the user; you cannot, so never answer them yourself, pick a model, or retry with a different one. Do not call any other tool. Do not Read any of the temp files (they are gone by the time the call returns — the script cleans up via an EXIT trap).
 
 ## Example output
 

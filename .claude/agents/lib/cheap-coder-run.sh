@@ -118,6 +118,11 @@ fi
 #
 # String surgery is bash parameter expansion only (no sed/awk) for
 # cross-platform parity.
+# Model ids are `provider/model`, optionally `#variant`.
+is_valid_model_id() {
+  printf '%s' "$1" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._#/-]*$'
+}
+
 RESUME_SESSION_ID=""
 RESUME_HEADER_MALFORMED=0
 MODEL_ID=""
@@ -151,7 +156,7 @@ while :; do
       # fails fast (below): falling back to the config default could run the
       # task on an unknown model, so an explicit override must be exactly right
       # or not run at all. Omitting the header is the way to use the default.
-      if printf '%s' "$model_candidate" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._#/-]*$'; then
+      if is_valid_model_id "$model_candidate"; then
         MODEL_ID=$model_candidate
       else
         MODEL_HEADER_MALFORMED=1
@@ -178,6 +183,67 @@ if [ "$MODEL_HEADER_MALFORMED" -eq 1 ]; then
 **Next step (parent):** fix the MODEL header (format: 'MODEL: provider/model') and re-delegate; omit the header entirely to use the opencode config default.
 FAIL
   exit 0
+fi
+
+# ---- Model resolution ----
+#
+# Precedence (first hit wins):
+#   1. MODEL header on the task            — one run
+#   2. CHEAP_CODER_MODEL environment var   — per user/shell
+#   3. .claude/cheap-coder.model           — per project; first non-blank,
+#                                            non-# line, `provider/model[#variant]`
+#   4. nothing: no --model flag, opencode picks its own default
+#
+# Why not just rely on (4): `opencode run` does NOT use the model selected in the
+# interactive TUI (that choice lives in opencode's state dir, which `run` ignores), so
+# an unpinned run lands on whatever default opencode auto-picks — which can be a model
+# opencode itself cannot parse. Pinning a model here avoids that, and a model-level
+# failure is reported as ACTION REQUIRED so the parent asks the user (see Step 3/5).
+MODEL_SOURCE=""
+[ -n "$MODEL_ID" ] && MODEL_SOURCE="MODEL header"
+
+# Malformed env/file values fail fast like a malformed header: running the task on an
+# unknown fallback model is worse than not running it.
+fail_bad_model_source() {
+  local where=$1 value=$2 fix=$3
+  cat <<FAIL
+## cheap-coder result
+
+**Status:** failure
+**Opencode summary:** (not invoked)
+**Files changed:** none
+**Diff size:** 0 files, +0/-0 lines
+**Diff preview:** omitted
+**Warnings:** the model id in ${where} is malformed ('${value:0:100}') — expected 'provider/model' or 'provider/model#variant' (e.g. 'opencode-go/glm-5.3-flash'); opencode was NOT invoked
+**Next step (parent):** ${fix}, then re-delegate.
+FAIL
+  exit 0
+}
+
+MODEL_FILE=".claude/cheap-coder.model"
+if [ -z "$MODEL_ID" ] && [ -n "${CHEAP_CODER_MODEL:-}" ]; then
+  is_valid_model_id "$CHEAP_CODER_MODEL" || \
+    fail_bad_model_source "the CHEAP_CODER_MODEL environment variable" "$CHEAP_CODER_MODEL" "unset CHEAP_CODER_MODEL or set it to 'provider/model'"
+  MODEL_ID=$CHEAP_CODER_MODEL
+  MODEL_SOURCE="CHEAP_CODER_MODEL environment variable"
+fi
+if [ -z "$MODEL_ID" ] && [ -f "$MODEL_FILE" ]; then
+  file_model=""
+  while IFS= read -r model_line || [ -n "$model_line" ]; do
+    model_line=${model_line%$'\r'}
+    # Trim surrounding whitespace (parameter expansion only).
+    model_line=${model_line#"${model_line%%[![:space:]]*}"}
+    model_line=${model_line%"${model_line##*[![:space:]]}"}
+    case "$model_line" in "" | "#"*) continue ;; esac
+    file_model=$model_line
+    break
+  done < "$MODEL_FILE"
+  if [ -n "$file_model" ]; then
+    is_valid_model_id "$file_model" || \
+      fail_bad_model_source "$MODEL_FILE" "$file_model" "fix or delete $MODEL_FILE (one line: 'provider/model')"
+    MODEL_ID=$file_model
+    MODEL_SOURCE="$MODEL_FILE"
+  fi
 fi
 
 # Prompt = git-policy prefix + task. The prefix keeps all changes unstaged so
@@ -290,6 +356,12 @@ SESSION_ID=$(grep -m1 -o '"sessionID":"ses_[A-Za-z0-9]*"' "$CC_TMP/opencode.json
 # changed in v2 — `.error.type`/`.error.message` vs v1 `.error.name`/
 # `.error.data.message`; the `//` fallbacks cover both.
 jq -r 'select(.type=="error") | "\(.error.name // .error.type // "unknown"): \(.error.data.message // .error.message // "no message")"' "$CC_TMP/opencode.jsonl" 2>/dev/null > "$CC_TMP/errors.txt"
+
+# 3b-bis. Provider-level failures: error events whose type is `provider.*` (e.g.
+# provider.no-route "Model unavailable", provider.invalid-output, provider.internal,
+# usage limits). They mean the MODEL CALL failed, as opposed to a tool error inside a
+# healthy run, so only this namespace drives the ACTION REQUIRED report below.
+jq -r 'select(.type=="error" and ((.error.type // "") | startswith("provider."))) | "\(.error.type): \(.error.message // "no message")"' "$CC_TMP/opencode.jsonl" 2>/dev/null | cut -c1-300 > "$CC_TMP/provider_errors.txt"
 
 # 3c. Changed files, derived from git rather than tool_use events (path field
 # names inside `part.state.input` vary by tool). Same -z|tr|sort pipeline and
@@ -409,6 +481,29 @@ if [ -z "$MODEL_ID" ] && grep -q 'provider\.internal' "$CC_TMP/errors.txt" 2>/de
   WARNINGS="${WARNINGS}provider.internal error with no MODEL header — the opencode config default model may be invalid/rotated; set a working default ('opencode models' to list) or prepend a 'MODEL: provider/model' header. "
 fi
 
+# Anomaly 10: the model call itself failed (provider-level error) and the run produced
+# nothing usable (non-zero exit, or no final text). A provider error that opencode
+# retried past is not flagged. The parent cannot fix this alone: the user must pick a
+# model. The subagent cannot ask (it only has Bash), so the report asks the PARENT to.
+ACTION_REQUIRED=0
+if [ -s "$CC_TMP/provider_errors.txt" ] && { [ "$exit_code" -ne 0 ] || [ "$summary_size" -eq 0 ]; }; then
+  ACTION_REQUIRED=1
+fi
+
+# Suggestions: models the user recently used in the opencode TUI (state/model.json),
+# minus the one that just failed. Best effort and possibly stale — a model can be
+# withdrawn after it was used. `opencode models` is not used: it can print nothing.
+SUGGESTIONS=""
+if [ "$ACTION_REQUIRED" -eq 1 ]; then
+  STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/opencode/model.json"
+  if [ -f "$STATE_FILE" ]; then
+    SUGGESTIONS=$(jq -r --arg bad "$MODEL_ID" '
+      [.recent[]? | select(.providerID and .modelID) | "\(.providerID)/\(.modelID)"]
+      | reduce .[] as $m ([]; if index($m) or $m == $bad then . else . + [$m] end)
+      | .[:8] | join(", ")' "$STATE_FILE" 2>/dev/null)
+  fi
+fi
+
 # ---- Step 4: status rubric ----
 #
 # success: exit 0, no error events
@@ -493,12 +588,29 @@ else
   fi
 fi
 echo "**Warnings:** $WARNINGS"
+if [ "$ACTION_REQUIRED" -eq 1 ]; then
+  if [ -n "$MODEL_ID" ]; then
+    MODEL_TRIED="$MODEL_ID (from $MODEL_SOURCE)"
+  else
+    MODEL_TRIED="none pinned — opencode picked its own default (it ignores the model selected in its interactive UI)"
+  fi
+  echo "**Action required:** MODEL_NEEDED — the model call failed: $(head -n 1 "$CC_TMP/provider_errors.txt"). Ask the user which opencode model to use (AskUserQuestion), then re-delegate the SAME task with 'MODEL: provider/model' as the first line, and save the answer as a single 'provider/model' line in .claude/cheap-coder.model so later runs use it without asking (suggest adding that file to .gitignore if the choice is personal)."
+  if [ "$MODEL_SOURCE" = "CHEAP_CODER_MODEL environment variable" ]; then
+    echo "**Note:** the CHEAP_CODER_MODEL environment variable is set and takes precedence over .claude/cheap-coder.model; tell the user to change or unset it."
+  fi
+  echo "**Model tried:** $MODEL_TRIED"
+  if [ -n "$SUGGESTIONS" ]; then
+    echo "**Suggested models:** $SUGGESTIONS (recently used in the opencode UI; may be stale — a model can be withdrawn)"
+  fi
+fi
 # Session id (when captured) — surfaced for resuming, regardless of status.
 if [ -n "$SESSION_ID" ]; then
   echo "**Session ID:** $SESSION_ID"
   echo "**Resume with:** prepend 'RESUME-SESSION: $SESSION_ID' (then a blank line) to a follow-up task to continue this opencode conversation"
 fi
-if [ "$include_diff" -eq 0 ] && [ "$new_untracked_count" -gt 0 ]; then
+if [ "$ACTION_REQUIRED" -eq 1 ]; then
+  echo "**Next step (parent):** Do not review or accept this result as a finished task. Resolve the model first (see Action required), then re-delegate."
+elif [ "$include_diff" -eq 0 ] && [ "$new_untracked_count" -gt 0 ]; then
   echo "**Next step (parent):** Review the diff before accepting. Run \`git diff\` for the tracked-file changes, and \`cat\` (or read) each \`??\` file listed above to see new untracked contents."
 else
   echo "**Next step (parent):** Review the diff before accepting. If the preview is omitted, run \`git diff\` to see the full change."
